@@ -19,3 +19,24 @@ for 菜名, 信息 in menu.items():
     print(f"  食材：{', '.join(信息['食材'])}")
     print(f"  做法：{信息['做法']}")
     print("-" * 30)
+
+    # 删除菜谱
+菜名 = input("请输入要删除的菜名：")
+if 菜名 in menu:
+    del menu[菜名]
+    print(f"已删除 {菜名}")
+else:
+    print(f"未找到 {菜名}")
+
+    # 修改菜谱
+菜名 = input("请输入要修改的菜名：")
+if 菜名 in menu:
+    新食材 = input("请输入新的食材（用英文逗号分隔）：").split(",")
+    新做法 = input("请输入新的做法（用 \\n 分隔步骤）：")
+    menu[菜名]["食材"] = 新食材
+    menu[菜名]["做法"] = "\n" + 新做法
+    print(f"{菜名}已更新！")
+    print(f"食材：{menu[菜名]['食材']}")
+    print(f"做法：{menu[菜名]['做法']}")
+else:
+    print(f"未找到 {菜名}")
