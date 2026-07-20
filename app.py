@@ -81,7 +81,6 @@ def ai_recommend(ingredients_input):
         
         content = response.output.choices[0].message.content
         
-        # ========== 解析 AI 返回内容 ==========
         lines = content.strip().split("\n")
         name = ""
         ingredients = ""
@@ -101,7 +100,6 @@ def ai_recommend(ingredients_input):
                 elif ":" in line:
                     ingredients = line.split(":")[-1].strip()
             elif "做法" in line:
-                # 检查这一行后面有没有内容
                 if "：" in line:
                     rest = line.split("：")[-1].strip()
                 elif ":" in line:
@@ -113,7 +111,6 @@ def ai_recommend(ingredients_input):
                 else:
                     is_steps = True
             elif is_steps and line:
-                # 跳过可能出现的"菜名：""食材："等关键词
                 if "菜名" in line or "食材" in line or "做法" in line:
                     continue
                 if steps:
@@ -121,7 +118,6 @@ def ai_recommend(ingredients_input):
                 else:
                     steps = line
         
-        # 如果解析成功，返回结果
         if name and ingredients and steps:
             return {
                 "name": name,
@@ -129,7 +125,6 @@ def ai_recommend(ingredients_input):
                 "steps": steps
             }, content
         else:
-            # 如果解析失败，返回原始内容，让用户看到
             return None, content
             
     except Exception as e:
@@ -138,6 +133,10 @@ def ai_recommend(ingredients_input):
 # ==================== 页面设置 ====================
 st.set_page_config(page_title="家庭菜谱", page_icon="🍳")
 st.title("🍳 家庭菜谱管理系统")
+
+# ==================== 初始化状态 ====================
+if "show_menu" not in st.session_state:
+    st.session_state.show_menu = False
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -196,38 +195,53 @@ if "ai_result" in st.session_state and st.session_state["ai_result"]:
             st.rerun()
     st.divider()
 
-# 显示所有菜
-menu_data = load_menu()
+# ==================== 菜单显示（按钮控制） ====================
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    if st.button("🍽️ 打开菜单", use_container_width=True):
+        st.session_state.show_menu = not st.session_state.show_menu
 
-if menu_data:
-    st.subheader(f"📋 当前菜单（共 {len(menu_data)} 道菜）")
-    for name, ingredients, steps in menu_data:
-        with st.expander(f"**{name}**"):
-            st.markdown(f"**食材**：{ingredients}")
-            st.text(f"做法：{steps}")
+if st.session_state.show_menu:
+    menu_data = load_menu()
+    if menu_data:
+        st.subheader(f"📋 当前菜单（共 {len(menu_data)} 道菜）")
+        for name, ingredients, steps in menu_data:
+            with st.expander(f"**{name}**"):
+                st.markdown(f"**食材**：{ingredients}")
+                st.text(f"做法：{steps}")
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button(f"🗑️ 删除 {name}"):
-                    delete_recipe(name)
-                    st.success(f"已删除 {name}")
-                    st.rerun()
-            with col2:
-                if st.button(f"✏️ 修改 {name}"):
-                    st.session_state["edit_name"] = name
-                    st.session_state["edit_ingredients"] = ingredients
-                    st.session_state["edit_steps"] = steps
+                col1, col2 = st.columns(2)
+                with col1:
+                    # 使用 popover 实现删除确认
+                    with st.popover(f"🗑️ 删除 {name}", use_container_width=True):
+                        st.warning(f"确定要删除【{name}】吗？")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("✅ 确认", key=f"confirm_{name}"):
+                                delete_recipe(name)
+                                st.success(f"已删除 {name}")
+                                st.rerun()
+                        with col_no:
+                            if st.button("❌ 取消", key=f"cancel_{name}"):
+                                st.rerun()
+                with col2:
+                    if st.button(f"✏️ 修改 {name}"):
+                        st.session_state["edit_name"] = name
+                        st.session_state["edit_ingredients"] = ingredients
+                        st.session_state["edit_steps"] = steps
 
-            if st.session_state.get("edit_name") == name:
-                st.divider()
-                st.subheader(f"✏️ 修改【{name}】")
-                new_name = st.text_input("新菜名", value=name, key=f"new_name_{name}")
-                new_ingredients = st.text_input("新食材（用英文逗号分隔）", value=ingredients, key=f"new_ingredients_{name}")
-                new_steps = st.text_area("新做法（每步换行）", value=steps, key=f"new_steps_{name}")
-                if st.button("💾 保存修改", key=f"save_{name}"):
-                    update_recipe(name, new_name, new_ingredients, new_steps)
-                    st.success(f"✅ 【{name}】已修改为【{new_name}】")
-                    st.session_state["edit_name"] = None
-                    st.rerun()
+                if st.session_state.get("edit_name") == name:
+                    st.divider()
+                    st.subheader(f"✏️ 修改【{name}】")
+                    new_name = st.text_input("新菜名", value=name, key=f"new_name_{name}")
+                    new_ingredients = st.text_input("新食材（用英文逗号分隔）", value=ingredients, key=f"new_ingredients_{name}")
+                    new_steps = st.text_area("新做法（每步换行）", value=steps, key=f"new_steps_{name}")
+                    if st.button("💾 保存修改", key=f"save_{name}"):
+                        update_recipe(name, new_name, new_ingredients, new_steps)
+                        st.success(f"✅ 【{name}】已修改为【{new_name}】")
+                        st.session_state["edit_name"] = None
+                        st.rerun()
+    else:
+        st.info("📭 菜单是空的，请添加菜谱！")
 else:
-    st.info("📭 菜单是空的，请添加菜谱！")
+    st.caption("👆 点击上方按钮查看菜单")
