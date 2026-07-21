@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 import dashscope
 from dashscope import Generation
+import datetime
 
 load_dotenv()
 
@@ -16,7 +17,7 @@ DB_CONFIG = {
     "charset": "utf8mb4"
 }
 
-# ==================== 加载数据 ====================
+# ==================== 菜谱相关函数（保持不变） ====================
 def load_menu():
     conn = pymysql.connect(**DB_CONFIG)
     cursor = conn.cursor()
@@ -25,7 +26,6 @@ def load_menu():
     conn.close()
     return rows
 
-# ==================== 增删改 ====================
 def add_recipe(name, ingredients, steps):
     conn = pymysql.connect(**DB_CONFIG)
     cursor = conn.cursor()
@@ -53,27 +53,18 @@ def update_recipe(old_name, new_name, new_ingredients, new_steps):
     conn.commit()
     conn.close()
 
-# ==================== 关键词检索 ====================
 def search_recipes_by_keyword(query):
     rows = load_menu()
     results = []
     query_lower = query.lower()
-    
     for name, ingredients, steps in rows:
         combined = f"{name} {ingredients} {steps}".lower()
         if query_lower in combined:
-            results.append({
-                "name": name,
-                "ingredients": ingredients,
-                "steps": steps
-            })
-    
+            results.append({"name": name, "ingredients": ingredients, "steps": steps})
     return results
 
-# ==================== AI 生成菜谱（批量） ====================
 def ai_generate_recipes(taste, count=5):
     dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
-    
     prompt = f"""你是一个厨艺高超的AI厨师。请根据以下要求生成 {count} 道菜谱：
 口味要求：{taste}
 
@@ -101,13 +92,10 @@ def ai_generate_recipes(taste, count=5):
         )
         if response.status_code != 200:
             return None, f"❌ API 调用失败：{response.message}"
-        
         content = response.output.choices[0].message.content
         recipes = parse_recipes(content)
-        
         if not recipes:
             return None, "解析失败，AI 返回格式异常"
-        
         return recipes, None
     except Exception as e:
         return None, f"❌ AI 服务暂时不可用：{e}"
@@ -115,22 +103,18 @@ def ai_generate_recipes(taste, count=5):
 def parse_recipes(content):
     recipes = []
     blocks = content.split("---")
-    
     for block in blocks:
         block = block.strip()
         if not block:
             continue
-        
         name = ""
         ingredients = ""
         steps = ""
         is_steps = False
-        
         for line in block.split("\n"):
             line = line.strip()
             if not line:
                 continue
-            
             if "菜名" in line:
                 if "：" in line:
                     name = line.split("：")[-1].strip()
@@ -159,199 +143,374 @@ def parse_recipes(content):
                     steps += "\n" + line
                 else:
                     steps = line
-        
         if name and ingredients and steps:
-            recipes.append({
-                "name": name,
-                "ingredients": ingredients,
-                "steps": steps
-            })
-    
+            recipes.append({"name": name, "ingredients": ingredients, "steps": steps})
     return recipes
 
-# ==================== 页面设置 ====================
-st.set_page_config(page_title="家庭菜谱", page_icon="🍳")
-st.title("🍳 家庭菜谱管理系统")
-
-# ==================== 初始化状态 ====================
-if "show_menu" not in st.session_state:
-    st.session_state.show_menu = False
-if "generated_recipes" not in st.session_state:
-    st.session_state.generated_recipes = []
-if "search_results" not in st.session_state:
-    st.session_state.search_results = []
-if "add_success" not in st.session_state:
-    st.session_state.add_success = None
-if "current_taste" not in st.session_state:
-    st.session_state.current_taste = ""
-if "current_count" not in st.session_state:
-    st.session_state.current_count = 5
-
-# ==================== 侧边栏 ====================
-with st.sidebar:
-    st.header("➕ 新增菜")
-    with st.form("add_form"):
-        new_name = st.text_input("菜名")
-        new_ingredients = st.text_input("食材（用英文逗号分隔）")
-        new_steps = st.text_area("做法（每步换行）")
-        submitted = st.form_submit_button("添加")
-        if submitted:
-            if not new_name or not new_ingredients or not new_steps:
-                st.error("请填写完整信息")
-            else:
-                add_recipe(new_name, new_ingredients, new_steps)
-                st.success(f"✅ 已添加【{new_name}】")
-                st.rerun()
-
-# ==================== AI 智能推荐 ====================
-st.subheader("🤖 AI 智能推荐")
-
-tab1, tab2 = st.tabs(["📋 从菜单里找", "✨ AI 生成新菜"])
-
-# ---------- Tab 1: 从菜单里找 ----------
-with tab1:
-    taste = st.text_input("你想吃什么口味的？（例如：清淡的、辣的、快速的、家常的）", key="search_taste")
-    if st.button("🔍 在菜单里找", key="search_btn"):
-        if not taste.strip():
-            st.error("请输入你想吃的类型")
-        else:
-            with st.spinner("正在检索你的菜单..."):
-                results = search_recipes_by_keyword(taste)
-                if results:
-                    st.session_state.search_results = results
-                    st.success(f"找到 {len(results)} 道菜")
-                else:
-                    st.info("你的菜单里暂时没有符合这个口味的菜，试试「AI 生成新菜」吧！")
-
-    if st.session_state.search_results:
-        for dish in st.session_state.search_results:
-            with st.expander(f"**{dish['name']}**"):
-                st.markdown(f"**食材**：{dish['ingredients']}")
-                st.text(f"做法：{dish['steps']}")
-
-# ---------- Tab 2: AI 生成新菜 ----------
-with tab2:
-    # 显示添加成功消息
-    if st.session_state.add_success:
-        st.success(st.session_state.add_success)
+# ==================== 菜谱板块页面 ====================
+def cook_page():
+    st.title("📖 我们家的小饭桌")
+    
+    # 初始化状态
+    if "show_menu" not in st.session_state:
+        st.session_state.show_menu = False
+    if "generated_recipes" not in st.session_state:
+        st.session_state.generated_recipes = []
+    if "search_results" not in st.session_state:
+        st.session_state.search_results = []
+    if "add_success" not in st.session_state:
         st.session_state.add_success = None
-    
-    taste2 = st.text_input("你想生成什么口味的菜？（例如：清淡的、辣的、快速的、家常的）", key="gen_taste")
-    count = st.slider("生成数量", min_value=3, max_value=10, value=5, key="gen_count")
-    
-    col_gen1, col_gen2 = st.columns(2)
-    with col_gen1:
-        if st.button("✨ 生成菜谱", key="gen_btn"):
-            if not taste2.strip():
-                st.error("请输入你想吃的类型")
+    if "current_taste" not in st.session_state:
+        st.session_state.current_taste = ""
+    if "current_count" not in st.session_state:
+        st.session_state.current_count = 5
+
+    # 侧边栏 - 新增菜
+    with st.sidebar:
+        st.header("➕ 新增菜")
+        with st.form("add_form"):
+            new_name = st.text_input("菜名")
+            new_ingredients = st.text_input("食材（用英文逗号分隔）")
+            new_steps = st.text_area("做法（每步换行）")
+            submitted = st.form_submit_button("添加")
+            if submitted:
+                if not new_name or not new_ingredients or not new_steps:
+                    st.error("请填写完整信息")
+                else:
+                    add_recipe(new_name, new_ingredients, new_steps)
+                    st.success(f"✅ 已添加【{new_name}】")
+                    st.rerun()
+
+        st.divider()
+        st.header("🤖 AI 推荐菜")
+        ai_ingredients = st.text_input("请输入食材（用中文逗号或空格分隔）")
+        if st.button("推荐"):
+            if not ai_ingredients.strip():
+                st.error("请输入食材")
             else:
-                with st.spinner(f"AI 正在生成 {count} 道菜..."):
-                    recipes, err = ai_generate_recipes(taste2, count)
+                with st.spinner("AI 正在思考..."):
+                    recipes, err = ai_generate_recipes(ai_ingredients, 3)
                     if err:
                         st.error(err)
                     elif recipes:
                         st.session_state.generated_recipes = recipes
-                        st.session_state.current_taste = taste2
-                        st.session_state.current_count = count
                         st.success(f"✅ AI 生成了 {len(recipes)} 道菜！")
                     else:
                         st.error("生成失败，请重试")
-    
-    with col_gen2:
-        if st.button("🔄 换一批", key="refresh_btn"):
-            if not st.session_state.current_taste:
-                st.warning("请先生成菜谱")
-            else:
-                with st.spinner(f"AI 正在生成 {st.session_state.current_count} 道菜..."):
-                    recipes, err = ai_generate_recipes(st.session_state.current_taste, st.session_state.current_count)
-                    if err:
-                        st.error(err)
-                    elif recipes:
-                        st.session_state.generated_recipes = recipes
-                        st.success(f"✅ 已换一批！生成了 {len(recipes)} 道菜")
-                    else:
-                        st.error("生成失败，请重试")
 
-    if st.session_state.generated_recipes:
-        st.divider()
-        st.subheader(f"📝 AI 生成的菜谱（共 {len(st.session_state.generated_recipes)} 道）")
-        
-        col_all1, col_all2 = st.columns(2)
-        with col_all1:
-            if st.button("✅ 全部加入菜单"):
-                for dish in st.session_state.generated_recipes:
-                    add_recipe(dish["name"], dish["ingredients"], dish["steps"])
-                st.session_state.add_success = f"✅ 成功添加 {len(st.session_state.generated_recipes)} 道菜到菜单！"
-                st.session_state.generated_recipes = []
+    # AI 推荐结果展示
+    if "ai_result" in st.session_state and st.session_state.ai_result:
+        result = st.session_state.ai_result
+        st.subheader("🤖 AI 推荐结果")
+        st.markdown(f"**菜名：{result['name']}**")
+        st.markdown(f"**食材：{result['ingredients']}**")
+        st.text(f"做法：{result['steps']}")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 保存到菜单"):
+                add_recipe(result["name"], result["ingredients"], result["steps"])
+                st.success(f"✅ 已保存【{result['name']}】")
+                st.session_state.ai_result = None
                 st.rerun()
-        with col_all2:
-            if st.button("🗑️ 全部丢弃"):
-                st.session_state.generated_recipes = []
+        with col2:
+            if st.button("🗑️ 丢弃"):
+                st.session_state.ai_result = None
                 st.rerun()
-        
         st.divider()
-        
-        for i, dish in enumerate(st.session_state.generated_recipes):
-            with st.expander(f"**{i+1}. {dish['name']}**"):
-                st.markdown(f"**食材**：{dish['ingredients']}")
-                st.text(f"做法：{dish['steps']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(f"✅ 加入菜单", key=f"add_{i}"):
-                        add_recipe(dish["name"], dish["ingredients"], dish["steps"])
-                        st.session_state.add_success = f"✅ 成功添加【{dish['name']}】到菜单！"
-                        st.session_state.generated_recipes.pop(i)
-                        st.rerun()
-                with col2:
-                    if st.button(f"⏭️ 跳过", key=f"skip_{i}"):
-                        st.session_state.generated_recipes.pop(i)
-                        st.rerun()
 
-# ==================== 菜单显示 ====================
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
+    # 显示菜单
     if st.button("🍽️ 打开菜单", use_container_width=True):
         st.session_state.show_menu = not st.session_state.show_menu
 
-if st.session_state.show_menu:
-    menu_data = load_menu()
-    if menu_data:
-        st.subheader(f"📋 当前菜单（共 {len(menu_data)} 道菜）")
-        for name, ingredients, steps in menu_data:
-            with st.expander(f"**{name}**"):
-                st.markdown(f"**食材**：{ingredients}")
-                st.text(f"做法：{steps}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    with st.popover(f"🗑️ 删除 {name}", use_container_width=True):
-                        st.warning(f"确定要删除【{name}】吗？")
-                        col_yes, col_no = st.columns(2)
-                        with col_yes:
+    if st.session_state.show_menu:
+        menu_data = load_menu()
+        if menu_data:
+            st.subheader(f"📋 当前菜单（共 {len(menu_data)} 道菜）")
+            for name, ingredients, steps in menu_data:
+                with st.expander(f"**{name}**"):
+                    st.markdown(f"**食材**：{ingredients}")
+                    st.text(f"做法：{steps}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        with st.popover(f"🗑️ 删除 {name}", use_container_width=True):
+                            st.warning(f"确定要删除【{name}】吗？")
                             if st.button("✅ 确认", key=f"confirm_{name}"):
                                 delete_recipe(name)
                                 st.success(f"已删除 {name}")
                                 st.rerun()
-                        with col_no:
                             if st.button("❌ 取消", key=f"cancel_{name}"):
                                 st.rerun()
-                with col2:
-                    if st.button(f"✏️ 修改 {name}"):
-                        st.session_state["edit_name"] = name
-                        st.session_state["edit_ingredients"] = ingredients
-                        st.session_state["edit_steps"] = steps
+                    with col2:
+                        if st.button(f"✏️ 修改 {name}"):
+                            st.session_state["edit_name"] = name
+                            st.session_state["edit_ingredients"] = ingredients
+                            st.session_state["edit_steps"] = steps
 
-                if st.session_state.get("edit_name") == name:
-                    st.divider()
-                    st.subheader(f"✏️ 修改【{name}】")
-                    new_name = st.text_input("新菜名", value=name, key=f"new_name_{name}")
-                    new_ingredients = st.text_input("新食材（用英文逗号分隔）", value=ingredients, key=f"new_ingredients_{name}")
-                    new_steps = st.text_area("新做法（每步换行）", value=steps, key=f"new_steps_{name}")
-                    if st.button("💾 保存修改", key=f"save_{name}"):
-                        update_recipe(name, new_name, new_ingredients, new_steps)
-                        st.success(f"✅ 【{name}】已修改为【{new_name}】")
-                        st.session_state["edit_name"] = None
-                        st.rerun()
+                    if st.session_state.get("edit_name") == name:
+                        st.divider()
+                        st.subheader(f"✏️ 修改【{name}】")
+                        new_name = st.text_input("新菜名", value=name, key=f"new_name_{name}")
+                        new_ingredients = st.text_input("新食材（用英文逗号分隔）", value=ingredients, key=f"new_ingredients_{name}")
+                        new_steps = st.text_area("新做法（每步换行）", value=steps, key=f"new_steps_{name}")
+                        if st.button("💾 保存修改", key=f"save_{name}"):
+                            update_recipe(name, new_name, new_ingredients, new_steps)
+                            st.success(f"✅ 【{name}】已修改为【{new_name}】")
+                            st.session_state["edit_name"] = None
+                            st.rerun()
+        else:
+            st.info("📭 菜单是空的，请添加菜谱！")
     else:
-        st.info("📭 菜单是空的，请添加菜谱！")
-else:
-    st.caption("👆 点击上方按钮查看菜单")
+        st.caption("👆 点击上方按钮查看菜单")
+
+    # 返回首页按钮
+    if st.button("🏠 返回首页"):
+        st.session_state.page = "home"
+        st.rerun()
+
+# ==================== 旅行板块页面（占位） ====================
+def travel_page():
+    import folium
+    from streamlit_folium import st_folium
+    import datetime
+    
+    st.title("✈️ 我们的旅行地图")
+    
+    # 从数据库加载旅行数据
+    conn = pymysql.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute("SELECT city_name, province, status, description, visit_date FROM travel_records")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 准备数据
+    visited_cities = []
+    planned_cities = []
+    city_details = {}
+    
+    for city, province, status, desc, date in rows:
+        if status == 'visited':
+            visited_cities.append(city)
+            city_details[city] = {"province": province, "status": "已去", "desc": desc, "date": date}
+        else:
+            planned_cities.append(city)
+            city_details[city] = {"province": province, "status": "计划中", "desc": desc, "date": date}
+    
+    # 中国主要城市坐标
+    city_coords = {
+        "北京": [39.9042, 116.4074],
+        "上海": [31.2304, 121.4737],
+        "广州": [23.1291, 113.2644],
+        "深圳": [22.5431, 114.0579],
+        "杭州": [30.2741, 120.1551],
+        "成都": [30.5728, 104.0668],
+        "武汉": [30.5928, 114.3055],
+        "南京": [32.0603, 118.7969],
+        "西安": [34.3416, 108.9398],
+        "重庆": [29.4316, 106.9123],
+        "长沙": [28.2282, 112.9388],
+        "郑州": [34.7470, 113.6250],
+        "济南": [36.6512, 117.1201],
+        "青岛": [36.0671, 120.3826],
+        "厦门": [24.4798, 118.0894],
+        "三亚": [18.2528, 109.5119],
+        "昆明": [24.8801, 102.8329],
+        "贵阳": [26.6477, 106.6302],
+        "兰州": [36.0611, 103.8343],
+        "西宁": [36.6171, 101.7782],
+        "银川": [38.4872, 106.2309],
+        "乌鲁木齐": [43.8256, 87.6168],
+        "拉萨": [29.6500, 91.1000],
+        "呼和浩特": [40.8424, 111.7490],
+        "哈尔滨": [45.8038, 126.5350],
+        "长春": [43.8868, 125.3245],
+        "沈阳": [41.8057, 123.4315],
+        "大连": [38.9140, 121.6147],
+        "天津": [39.0842, 117.2009],
+        "石家庄": [38.0423, 114.5149],
+        "太原": [37.8706, 112.5489],
+        "合肥": [31.8206, 117.2272],
+        "福州": [26.0745, 119.2965],
+        "南昌": [28.6820, 115.8579],
+        "南宁": [22.8170, 108.3665],
+        "海口": [20.0174, 110.3492],
+        "香港": [22.3193, 114.1694],
+        "澳门": [22.1987, 113.5439],
+        "台北": [25.0330, 121.5654],
+        "苏州": [31.2990, 120.5853],
+        "宁波": [29.8683, 121.5439],
+        "无锡": [31.4912, 120.3119],
+        "佛山": [23.0215, 113.1214],
+        "东莞": [23.0207, 113.7518],
+        "泉州": [24.8739, 118.6759],
+        "温州": [27.9949, 120.6984],
+        "绍兴": [30.0303, 120.5802],
+        "嘉兴": [30.7628, 120.7550],
+        "金华": [29.0781, 119.6476],
+        "台州": [28.6564, 121.4208],
+        "湖州": [30.8943, 120.0868],
+        "丽水": [28.4676, 119.9231],
+        "衢州": [28.9359, 118.8594],
+        "舟山": [30.0160, 122.2072],
+        "烟台": [37.4638, 121.4479],
+        "潍坊": [36.7063, 119.1618],
+        "淄博": [36.8131, 118.0550],
+        "临沂": [35.1049, 118.3564],
+        "济宁": [35.4148, 116.5872],
+    }
+    
+    # 创建地图（使用高德地图瓦片）
+    m = folium.Map(
+        location=[35.0, 105.0],
+        zoom_start=4,
+        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+        attr='高德地图'
+    )
+    
+    # 添加已去城市标记（红色）
+    for city in visited_cities:
+        if city in city_coords:
+            lat, lon = city_coords[city]
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=12,
+                color='red',
+                fill=True,
+                fill_color='red',
+                fill_opacity=0.8,
+                popup=folium.Popup(f"{city}<br/>已去", max_width=200),
+                tooltip=city
+            ).add_to(m)
+    
+    # 添加计划城市标记（橙色）
+    for city in planned_cities:
+        if city in city_coords:
+            lat, lon = city_coords[city]
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=12,
+                color='orange',
+                fill=True,
+                fill_color='orange',
+                fill_opacity=0.8,
+                popup=folium.Popup(f"{city}<br/>计划中", max_width=200),
+                tooltip=city
+            ).add_to(m)
+    
+    # 显示地图和列表
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st_data = st_folium(m, width=700, height=500)
+    
+    with col2:
+        st.subheader("📍 城市列表")
+        if visited_cities:
+            st.markdown("**🔴 已去城市**")
+            for city in visited_cities:
+                detail = city_details.get(city, {})
+                st.write(f"- {city}（{detail.get('province', '')}）")
+        if planned_cities:
+            st.markdown("**🟠 计划城市**")
+            for city in planned_cities:
+                detail = city_details.get(city, {})
+                st.write(f"- {city}（{detail.get('province', '')}）")
+        if not visited_cities and not planned_cities:
+            st.info("还没有旅行记录，添加一条吧！")
+    
+    # 添加旅行记录表单
+    st.divider()
+    st.subheader("📝 添加旅行记录")
+    with st.form("travel_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            city = st.text_input("城市名")
+            province = st.text_input("省份")
+        with col2:
+            date = st.date_input("旅行日期")
+            status = st.selectbox("状态", ["visited", "planned"], format_func=lambda x: "已去" if x == "visited" else "计划中")
+        description = st.text_area("游记/备注")
+        submitted = st.form_submit_button("保存")
+        
+        if submitted:
+            if not city or not province:
+                st.error("请填写城市和省份")
+            else:
+                conn = pymysql.connect(**DB_CONFIG)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO travel_records (city_name, province, visit_date, description, status) VALUES (%s, %s, %s, %s, %s)",
+                    (city, province, date, description, status)
+                )
+                conn.commit()
+                conn.close()
+                st.success(f"✅ 已添加 {city}")
+                st.rerun()
+    
+    # 返回首页按钮
+    if st.button("🏠 返回首页"):
+        st.session_state.page = "home"
+        st.rerun()
+
+# ==================== 主页面 ====================
+def home_page():
+    # 动态欢迎语
+    now = datetime.datetime.now()
+    hour = now.hour
+    if hour < 6:
+        greeting = "夜深了 🌙"
+    elif hour < 12:
+        greeting = "早上好 ☀️"
+    elif hour < 14:
+        greeting = "中午好 🌤️"
+    elif hour < 18:
+        greeting = "下午好 🌅"
+    elif hour < 22:
+        greeting = "晚上好 🌙"
+    else:
+        greeting = "夜深了 🌙"
+    
+    st.title(f"🏠 {greeting}，欢迎回家")
+    st.caption(f"📅 {now.strftime('%Y年%m月%d日')}")
+    st.divider()
+    
+    # 板块入口
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div style="background: #FFF5E6; border-radius: 20px; padding: 30px; text-align: center; border: 2px solid #FFD699; cursor: pointer;">
+            <div style="font-size: 60px;">✈️</div>
+            <div style="font-size: 24px; font-weight: bold; margin-top: 10px;">旅行</div>
+            <div style="color: #888; font-size: 14px;">记录我们走过的路</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("进入旅行", key="go_travel", use_container_width=True):
+            st.session_state.page = "travel"
+            st.rerun()
+    
+    with col2:
+        st.markdown("""
+        <div style="background: #E8F5E9; border-radius: 20px; padding: 30px; text-align: center; border: 2px solid #A5D6A7; cursor: pointer;">
+            <div style="font-size: 60px;">📖</div>
+            <div style="font-size: 24px; font-weight: bold; margin-top: 10px;">做菜</div>
+            <div style="color: #888; font-size: 14px;">吃好每一顿饭</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("进入做菜", key="go_cook", use_container_width=True):
+            st.session_state.page = "cook"
+            st.rerun()
+
+# ==================== 主程序 ====================
+def main():
+    st.set_page_config(page_title="宇帆&韬韬之家", page_icon="🏠", layout="wide")
+    
+    if "page" not in st.session_state:
+        st.session_state.page = "home"
+    
+    if st.session_state.page == "home":
+        home_page()
+    elif st.session_state.page == "travel":
+        travel_page()
+    elif st.session_state.page == "cook":
+        cook_page()
+
+if __name__ == "__main__":
+    main()
