@@ -278,145 +278,206 @@ def travel_page():
     # 从数据库加载旅行数据
     conn = pymysql.connect(**DB_CONFIG)
     cursor = conn.cursor()
-    cursor.execute("SELECT city_name, province, status, description, visit_date FROM travel_records")
+    cursor.execute("SELECT id, city_name, province, status, description, visit_date FROM travel_records")
     rows = cursor.fetchall()
     conn.close()
     
-    # 准备数据
-    visited_cities = []
-    planned_cities = []
-    city_details = {}
-    
-    for city, province, status, desc, date in rows:
-        if status == 'visited':
-            visited_cities.append(city)
-            city_details[city] = {"province": province, "status": "已去", "desc": desc, "date": date}
-        else:
-            planned_cities.append(city)
-            city_details[city] = {"province": province, "status": "计划中", "desc": desc, "date": date}
-    
-    # 中国主要城市坐标
+    # 城市坐标（已补充渭南）
     city_coords = {
         "北京": [39.9042, 116.4074],
         "上海": [31.2304, 121.4737],
-        "广州": [23.1291, 113.2644],
-        "深圳": [22.5431, 114.0579],
-        "杭州": [30.2741, 120.1551],
-        "成都": [30.5728, 104.0668],
-        "武汉": [30.5928, 114.3055],
-        "南京": [32.0603, 118.7969],
-        "西安": [34.3416, 108.9398],
+        "天津": [39.0842, 117.2009],
         "重庆": [29.4316, 106.9123],
-        "长沙": [28.2282, 112.9388],
-        "郑州": [34.7470, 113.6250],
+        "石家庄": [38.0423, 114.5149],
+        "太原": [37.8706, 112.5489],
+        "呼和浩特": [40.8424, 111.7490],
+        "沈阳": [41.8057, 123.4315],
+        "大连": [38.9140, 121.6147],
+        "长春": [43.8868, 125.3245],
+        "哈尔滨": [45.8038, 126.5350],
+        "南京": [32.0603, 118.7969],
+        "苏州": [31.2990, 120.5853],
+        "无锡": [31.4912, 120.3119],
+        "杭州": [30.2741, 120.1551],
+        "宁波": [29.8683, 121.5439],
+        "温州": [27.9949, 120.6984],
+        "合肥": [31.8206, 117.2272],
+        "福州": [26.0745, 119.2965],
+        "厦门": [24.4798, 118.0894],
+        "泉州": [24.8739, 118.6759],
+        "南昌": [28.6820, 115.8579],
         "济南": [36.6512, 117.1201],
         "青岛": [36.0671, 120.3826],
-        "厦门": [24.4798, 118.0894],
+        "淄博": [36.8131, 118.0550],
+        "烟台": [37.4638, 121.4479],
+        "潍坊": [36.7063, 119.1618],
+        "临沂": [35.1049, 118.3564],
+        "郑州": [34.7470, 113.6250],
+        "洛阳": [34.6100, 112.4500],
+        "武汉": [30.5928, 114.3055],
+        "长沙": [28.2282, 112.9388],
+        "广州": [23.1291, 113.2644],
+        "深圳": [22.5431, 114.0579],
+        "珠海": [22.2700, 113.5700],
+        "佛山": [23.0215, 113.1214],
+        "东莞": [23.0207, 113.7518],
+        "南宁": [22.8170, 108.3665],
+        "桂林": [25.2700, 110.2900],
+        "海口": [20.0174, 110.3492],
         "三亚": [18.2528, 109.5119],
-        "昆明": [24.8801, 102.8329],
+        "成都": [30.5728, 104.0668],
+        "绵阳": [31.4600, 104.7500],
         "贵阳": [26.6477, 106.6302],
+        "昆明": [24.8801, 102.8329],
+        "丽江": [26.8600, 100.2300],
+        "大理": [25.6100, 100.2800],
+        "拉萨": [29.6500, 91.1000],
+        "西安": [34.3416, 108.9398],
         "兰州": [36.0611, 103.8343],
         "西宁": [36.6171, 101.7782],
         "银川": [38.4872, 106.2309],
         "乌鲁木齐": [43.8256, 87.6168],
-        "拉萨": [29.6500, 91.1000],
-        "呼和浩特": [40.8424, 111.7490],
-        "哈尔滨": [45.8038, 126.5350],
-        "长春": [43.8868, 125.3245],
-        "沈阳": [41.8057, 123.4315],
-        "大连": [38.9140, 121.6147],
-        "天津": [39.0842, 117.2009],
-        "石家庄": [38.0423, 114.5149],
-        "太原": [37.8706, 112.5489],
-        "合肥": [31.8206, 117.2272],
-        "福州": [26.0745, 119.2965],
-        "南昌": [28.6820, 115.8579],
-        "南宁": [22.8170, 108.3665],
-        "海口": [20.0174, 110.3492],
+        "台北": [25.0330, 121.5654],
+        "高雄": [22.6300, 120.3100],
         "香港": [22.3193, 114.1694],
         "澳门": [22.1987, 113.5439],
-        "台北": [25.0330, 121.5654],
-        "苏州": [31.2990, 120.5853],
-        "宁波": [29.8683, 121.5439],
-        "无锡": [31.4912, 120.3119],
-        "佛山": [23.0215, 113.1214],
-        "东莞": [23.0207, 113.7518],
-        "泉州": [24.8739, 118.6759],
-        "温州": [27.9949, 120.6984],
-        "绍兴": [30.0303, 120.5802],
-        "嘉兴": [30.7628, 120.7550],
-        "金华": [29.0781, 119.6476],
-        "台州": [28.6564, 121.4208],
-        "湖州": [30.8943, 120.0868],
-        "丽水": [28.4676, 119.9231],
-        "衢州": [28.9359, 118.8594],
-        "舟山": [30.0160, 122.2072],
-        "烟台": [37.4638, 121.4479],
-        "潍坊": [36.7063, 119.1618],
-        "淄博": [36.8131, 118.0550],
-        "临沂": [35.1049, 118.3564],
-        "济宁": [35.4148, 116.5872],
+        # 新增
+        "渭南": [34.5000, 109.5000],
     }
     
-    # 创建地图（使用高德地图瓦片）
+    # 分类数据
+    visited = []
+    planned = []
+    city_details = {}
+    
+    for record_id, city, province, status, desc, date in rows:
+        city_details[city] = {"id": record_id, "province": province, "date": date, "desc": desc}
+        if status.strip().lower() == "visited":
+            visited.append(city)
+        else:
+            planned.append(city)
+    
+    # ========== 删除和修改功能 ==========
+    # 删除城市
+    if "delete_city" in st.query_params:
+        city_to_delete = st.query_params["delete_city"]
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM travel_records WHERE city_name = %s", (city_to_delete,))
+        conn.commit()
+        conn.close()
+        st.query_params.clear()
+        st.rerun()
+    
+    # 修改城市状态
+    if "toggle_city" in st.query_params:
+        city_to_toggle = st.query_params["toggle_city"]
+        # 获取当前状态
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM travel_records WHERE city_name = %s", (city_to_toggle,))
+        current = cursor.fetchone()[0]
+        new_status = "planned" if current == "visited" else "visited"
+        cursor.execute("UPDATE travel_records SET status = %s WHERE city_name = %s", (new_status, city_to_toggle))
+        conn.commit()
+        conn.close()
+        st.query_params.clear()
+        st.rerun()
+    
+    # 创建地图
     m = folium.Map(
         location=[35.0, 105.0],
         zoom_start=4,
-        tiles='https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
+        tiles='https://wprd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=9&x={x}&y={y}&z={z}',
         attr='高德地图'
     )
     
-    # 添加已去城市标记（红色）
-    for city in visited_cities:
+    # 已去城市：粉色圆点
+    for city in visited:
         if city in city_coords:
             lat, lon = city_coords[city]
             folium.CircleMarker(
                 location=[lat, lon],
-                radius=12,
-                color='red',
+                radius=8,
+                color="#FF69B47F",
                 fill=True,
-                fill_color='red',
-                fill_opacity=0.8,
-                popup=folium.Popup(f"{city}<br/>已去", max_width=200),
+                fill_color="#FF69B47F",
+                fill_opacity=0.9,
+                popup=folium.Popup(f"{city}<br/>已去 ✓", max_width=200),
                 tooltip=city
             ).add_to(m)
     
-    # 添加计划城市标记（橙色）
-    for city in planned_cities:
+    # 计划城市：亮绿色圆点
+    for city in planned:
         if city in city_coords:
             lat, lon = city_coords[city]
             folium.CircleMarker(
                 location=[lat, lon],
-                radius=12,
-                color='orange',
+                radius=8,
+                color="#6EEE19E6",
                 fill=True,
-                fill_color='orange',
-                fill_opacity=0.8,
-                popup=folium.Popup(f"{city}<br/>计划中", max_width=200),
+                fill_color="#6EEE19E6",
+                fill_opacity=0.9,
+                popup=folium.Popup(f"{city}<br/>计划中 ⏳", max_width=200),
                 tooltip=city
             ).add_to(m)
     
-    # 显示地图和列表
-    col1, col2 = st.columns([2, 1])
+    # 统计卡片
+    col1, col2 = st.columns(2)
     with col1:
-        st_data = st_folium(m, width=700, height=500)
+        st.metric("🏙️ 已点亮", len(visited))
+    with col2:
+        st.metric("📌 计划中", len(planned))
+    
+    # 地图
+    st_data = st_folium(m, width=2300, height=800)
+    
+    # ========== 城市列表（带删除和修改按钮） ==========
+    st.divider()
+    st.subheader("📍 城市管理")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**❤️ 已去城市**")
+        if visited:
+            for city in visited:
+                detail = city_details.get(city, {})
+                col_a, col_b, col_c = st.columns([3, 1, 1])
+                with col_a:
+                    st.write(f"{city}（{detail.get('province', '')}）")
+                with col_b:
+                    # 修改按钮：切换状态（已去 ↔ 计划中）
+                    if st.button(f"🔄", key=f"toggle_{city}"):
+                        st.query_params["toggle_city"] = city
+                        st.rerun()
+                with col_c:
+                    if st.button(f"🗑️", key=f"del_{city}"):
+                        st.query_params["delete_city"] = city
+                        st.rerun()
+        else:
+            st.write("暂无")
     
     with col2:
-        st.subheader("📍 城市列表")
-        if visited_cities:
-            st.markdown("**🔴 已去城市**")
-            for city in visited_cities:
+        st.markdown("**💚 计划城市**")
+        if planned:
+            for city in planned:
                 detail = city_details.get(city, {})
-                st.write(f"- {city}（{detail.get('province', '')}）")
-        if planned_cities:
-            st.markdown("**🟠 计划城市**")
-            for city in planned_cities:
-                detail = city_details.get(city, {})
-                st.write(f"- {city}（{detail.get('province', '')}）")
-        if not visited_cities and not planned_cities:
-            st.info("还没有旅行记录，添加一条吧！")
+                col_a, col_b, col_c = st.columns([3, 1, 1])
+                with col_a:
+                    st.write(f"{city}（{detail.get('province', '')}）")
+                with col_b:
+                    if st.button(f"🔄", key=f"toggle_{city}"):
+                        st.query_params["toggle_city"] = city
+                        st.rerun()
+                with col_c:
+                    if st.button(f"🗑️", key=f"del_{city}"):
+                        st.query_params["delete_city"] = city
+                        st.rerun()
+        else:
+            st.write("暂无")
     
-    # 添加旅行记录表单
+    # ========== 添加旅行记录表单 ==========
     st.divider()
     st.subheader("📝 添加旅行记录")
     with st.form("travel_form"):
@@ -445,7 +506,7 @@ def travel_page():
                 st.success(f"✅ 已添加 {city}")
                 st.rerun()
     
-    # 返回首页按钮
+    # ========== 返回首页 ==========
     if st.button("🏠 返回首页"):
         st.session_state.page = "home"
         st.rerun()
