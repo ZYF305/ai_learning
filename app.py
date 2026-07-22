@@ -154,117 +154,815 @@ def parse_recipes(content):
 
 # ==================== 菜谱板块 ====================
 def cook_page():
-    st.title("📖 我们家的小饭桌")
+    import datetime
+    import dashscope
+    from dashscope import Generation
+    import os
+    import base64
+    import re
     
-    if "show_menu" not in st.session_state:
-        st.session_state.show_menu = False
-    if "generated_recipes" not in st.session_state:
-        st.session_state.generated_recipes = []
-    if "search_results" not in st.session_state:
-        st.session_state.search_results = []
-    if "add_success" not in st.session_state:
-        st.session_state.add_success = None
-    if "current_taste" not in st.session_state:
-        st.session_state.current_taste = ""
-    if "current_count" not in st.session_state:
-        st.session_state.current_count = 5
-
-    with st.sidebar:
-        st.header("➕ 新增菜")
-        with st.form("add_form"):
-            new_name = st.text_input("菜名")
-            new_ingredients = st.text_input("食材（用英文逗号分隔）")
-            new_steps = st.text_area("做法（每步换行）")
-            submitted = st.form_submit_button("添加")
-            if submitted:
-                if not new_name or not new_ingredients or not new_steps:
-                    st.error("请填写完整信息")
-                else:
-                    add_recipe(new_name, new_ingredients, new_steps)
-                    st.success(f"✅ 已添加【{new_name}】")
-                    st.rerun()
-
-        st.divider()
-        st.header("🤖 AI 推荐菜")
-        ai_ingredients = st.text_input("请输入食材（用中文逗号或空格分隔）")
-        if st.button("推荐"):
-            if not ai_ingredients.strip():
-                st.error("请输入食材")
-            else:
-                with st.spinner("AI 正在思考..."):
-                    recipes, err = ai_generate_recipes(ai_ingredients, 3)
-                    if err:
-                        st.error(err)
-                    elif recipes:
-                        st.session_state.generated_recipes = recipes
-                        st.success(f"✅ AI 生成了 {len(recipes)} 道菜！")
-                    else:
-                        st.error("生成失败，请重试")
-
-    if "ai_result" in st.session_state and st.session_state.ai_result:
-        result = st.session_state.ai_result
-        st.subheader("🤖 AI 推荐结果")
-        st.markdown(f"**菜名：{result['name']}**")
-        st.markdown(f"**食材：{result['ingredients']}**")
-        st.text(f"做法：{result['steps']}")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("💾 保存到菜单"):
-                add_recipe(result["name"], result["ingredients"], result["steps"])
-                st.success(f"✅ 已保存【{result['name']}】")
-                st.session_state.ai_result = None
-                st.rerun()
-        with col2:
-            if st.button("🗑️ 丢弃"):
-                st.session_state.ai_result = None
-                st.rerun()
-        st.divider()
-
-    if st.button("🍽️ 打开菜单", use_container_width=True):
-        st.session_state.show_menu = not st.session_state.show_menu
-
-    if st.session_state.show_menu:
-        menu_data = load_menu()
-        if menu_data:
-            st.subheader(f"📋 当前菜单（共 {len(menu_data)} 道菜）")
-            for name, ingredients, steps in menu_data:
-                with st.expander(f"**{name}**"):
-                    st.markdown(f"**食材**：{ingredients}")
-                    st.text(f"做法：{steps}")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        with st.popover(f"🗑️ 删除 {name}", use_container_width=True):
-                            st.warning(f"确定要删除【{name}】吗？")
-                            if st.button("✅ 确认", key=f"confirm_{name}"):
-                                delete_recipe(name)
-                                st.success(f"已删除 {name}")
-                                st.rerun()
-                            if st.button("❌ 取消", key=f"cancel_{name}"):
-                                st.rerun()
-                    with col2:
-                        if st.button(f"✏️ 修改 {name}"):
-                            st.session_state["edit_name"] = name
-                            st.session_state["edit_ingredients"] = ingredients
-                            st.session_state["edit_steps"] = steps
-
-                    if st.session_state.get("edit_name") == name:
-                        st.divider()
-                        st.subheader(f"✏️ 修改【{name}】")
-                        new_name = st.text_input("新菜名", value=name, key=f"new_name_{name}")
-                        new_ingredients = st.text_input("新食材（用英文逗号分隔）", value=ingredients, key=f"new_ingredients_{name}")
-                        new_steps = st.text_area("新做法（每步换行）", value=steps, key=f"new_steps_{name}")
-                        if st.button("💾 保存修改", key=f"save_{name}"):
-                            update_recipe(name, new_name, new_ingredients, new_steps)
-                            st.success(f"✅ 【{name}】已修改为【{new_name}】")
-                            st.session_state["edit_name"] = None
-                            st.rerun()
-        else:
-            st.info("📭 菜单是空的，请添加菜谱！")
+    # ==================== 重置分类选中状态 ====================
+    if "selected_category_id" not in st.session_state:
+        st.session_state.selected_category_id = None
     else:
-        st.caption("👆 点击上方按钮查看菜单")
+        if "from_category_click" not in st.session_state:
+            st.session_state.selected_category_id = None
+        else:
+            st.session_state.from_category_click = False
+    
+    # ==================== 分类操作函数 ====================
+    def get_categories():
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, icon, sort_order FROM categories ORDER BY sort_order, id")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    
+    def add_category(name, icon="📋"):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO categories (name, icon) VALUES (%s, %s)",
+            (name, icon)
+        )
+        conn.commit()
+        conn.close()
+    
+    def update_category(cat_id, new_name):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE categories SET name = %s WHERE id = %s",
+            (new_name, cat_id)
+        )
+        conn.commit()
+        conn.close()
+    
+    def delete_category(cat_id):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM categories WHERE id = %s", (cat_id,))
+        conn.commit()
+        conn.close()
+    
+    # ==================== 菜操作函数 ====================
+    def get_recipes_by_category(category_id):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, ingredients, steps, cook_count, time_estimate, difficulty FROM recipes WHERE category_id = %s ORDER BY name",
+            (category_id,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    
+    def add_recipe(name, ingredients, steps, category_id, time_estimate="", difficulty=""):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO recipes (name, ingredients, steps, category_id, time_estimate, difficulty) VALUES (%s, %s, %s, %s, %s, %s)",
+            (name, ingredients, steps, category_id, time_estimate, difficulty)
+        )
+        conn.commit()
+        conn.close()
+    
+    def update_recipe(recipe_id, name, ingredients, steps, category_id, time_estimate="", difficulty=""):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE recipes SET name = %s, ingredients = %s, steps = %s, category_id = %s, time_estimate = %s, difficulty = %s WHERE id = %s",
+            (name, ingredients, steps, category_id, time_estimate, difficulty, recipe_id)
+        )
+        conn.commit()
+        conn.close()
+    
+    def delete_recipe(recipe_id):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM recipes WHERE id = %s", (recipe_id,))
+        conn.commit()
+        conn.close()
+    
+    def increment_cook_count(recipe_id):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE recipes SET cook_count = cook_count + 1 WHERE id = %s",
+            (recipe_id,)
+        )
+        conn.commit()
+        conn.close()
+    
+    def get_category_name(cat_id):
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, icon FROM categories WHERE id = %s", (cat_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row if row else (None, None)
+    
+    # ==================== 解析 AI 返回的内容（支持多道菜 + 类别） ====================
+    def parse_multiple_recipes(content):
+        recipes = []
+        blocks = content.split("---")
+        if len(blocks) == 1:
+            blocks = [content]
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            lines = block.split("\n")
+            name = ""
+            ingredients = ""
+            steps = ""
+            category = ""
+            current_section = None
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if "菜名" in line:
+                    if "：" in line:
+                        name = line.split("：")[-1].strip()
+                    elif ":" in line:
+                        name = line.split(":")[-1].strip()
+                elif "类别" in line:
+                    if "：" in line:
+                        category = line.split("：")[-1].strip()
+                    elif ":" in line:
+                        category = line.split(":")[-1].strip()
+                    current_section = "category"
+                elif "食材" in line:
+                    if "：" in line:
+                        ingredients = line.split("：")[-1].strip()
+                    elif ":" in line:
+                        ingredients = line.split(":")[-1].strip()
+                    else:
+                        current_section = "ingredients_waiting"
+                elif "做法" in line:
+                    if "：" in line:
+                        steps = line.split("：")[-1].strip()
+                    elif ":" in line:
+                        steps = line.split(":")[-1].strip()
+                    else:
+                        steps = line
+                    current_section = "steps"
+                elif current_section == "ingredients_waiting" and not ingredients:
+                    ingredients = line
+                    current_section = None
+                elif current_section == "steps" and name and ingredients:
+                    if steps:
+                        steps += "\n" + line
+                    else:
+                        steps = line
+            if name and ingredients and steps:
+                if not category:
+                    category = "未分类"
+                recipes.append({
+                    "name": name,
+                    "ingredients": ingredients,
+                    "steps": steps,
+                    "category": category
+                })
+        return recipes
+    
+    # ==================== 页面标题 ====================
+    st.markdown("# 📖 我们家的小饭桌")
+    
+    # ==================== 初始化 session_state ====================
+    if "edit_category_id" not in st.session_state:
+        st.session_state.edit_category_id = None
+    if "edit_recipe_id" not in st.session_state:
+        st.session_state.edit_recipe_id = None
+    if "category_ai_result" not in st.session_state:
+        st.session_state.category_ai_result = {}
+    if "recommended_names" not in st.session_state:
+        st.session_state.recommended_names = []  # 存储已推荐过的菜名（用于去重）
+    if "ai_global_result" not in st.session_state:
+        st.session_state.ai_global_result = []  # 当前推荐列表
+    if "ai_global_raw" not in st.session_state:
+        st.session_state.ai_global_raw = None
+    if "ai_mode" not in st.session_state:
+        st.session_state.ai_mode = "食材推荐"
+    if "image_recog_result" not in st.session_state:
+        st.session_state.image_recog_result = None
+    if "editing_category_idx" not in st.session_state:
+        st.session_state.editing_category_idx = None  # 用于记录当前正在修改类别的菜品索引
+    if "prev_result_len" not in st.session_state:
+        st.session_state.prev_result_len = 0  # 用于检测列表长度变化，重置编辑状态
+    
+    # ==================== 获取分类数据 ====================
+    categories = get_categories()
+    category_names = ["主食", "热菜", "凉菜", "汤类", "减肥专栏"]  # 默认分类列表，用于修改按钮
+    
+    # ==================== 检测列表长度变化，重置编辑状态 ====================
+    current_len = len(st.session_state.ai_global_result)
+    if st.session_state.prev_result_len != current_len:
+        st.session_state.editing_category_idx = None
+        st.session_state.prev_result_len = current_len
+    
+    # ==================== 左右两栏布局 ====================
+    col_left, col_right = st.columns([1.2, 3])
+    
+    # ==================== 左侧：分类管理 ====================
+    with col_left:
+        st.markdown("**📋 分类管理**")
+        
+        if not categories:
+            st.info("暂无分类，请先添加")
+        else:
+            for cat_id, cat_name, icon, sort_order in categories:
+                conn = pymysql.connect(**DB_CONFIG)
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM recipes WHERE category_id = %s", (cat_id,))
+                count = cursor.fetchone()[0]
+                conn.close()
+                
+                col_cat, col_btn1, col_btn2 = st.columns([3, 0.6, 0.6])
+                with col_cat:
+                    if st.button(f"{icon} {cat_name} ({count})", key=f"cat_{cat_id}", use_container_width=True):
+                        st.session_state.selected_category_id = cat_id
+                        st.session_state.from_category_click = True
+                        st.rerun()
+                with col_btn1:
+                    if st.button("✏️", key=f"edit_cat_{cat_id}", help="修改分类名称"):
+                        st.session_state.edit_category_id = cat_id
+                        st.rerun()
+                with col_btn2:
+                    if st.button("🗑️", key=f"del_cat_{cat_id}", help="删除分类及该分类下所有菜"):
+                        if count > 0:
+                            st.warning(f"该分类下有 {count} 道菜，删除分类将同时删除这些菜！")
+                        if st.button(f"确认删除 {cat_name}", key=f"confirm_del_cat_{cat_id}"):
+                            delete_category(cat_id)
+                            if st.session_state.selected_category_id == cat_id:
+                                st.session_state.selected_category_id = None
+                            st.rerun()
+                
+                if st.session_state.edit_category_id == cat_id:
+                    new_name = st.text_input("新分类名称", value=cat_name, key=f"new_cat_name_{cat_id}")
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.button("保存", key=f"save_cat_{cat_id}"):
+                            if new_name and new_name.strip():
+                                update_category(cat_id, new_name.strip())
+                                st.session_state.edit_category_id = None
+                                st.rerun()
+                            else:
+                                st.error("分类名称不能为空")
+                    with col_cancel:
+                        if st.button("取消", key=f"cancel_cat_{cat_id}"):
+                            st.session_state.edit_category_id = None
+                            st.rerun()
+                
+                st.divider()
+        
+        # 新增分类
+        st.markdown("**➕ 新增分类**")
+        new_cat_name = st.text_input("分类名称", key="new_cat_name", placeholder="输入新分类名称")
+        new_cat_icon = st.text_input("图标（选填）", key="new_cat_icon", placeholder="如：🍳", value="📋")
+        if st.button("添加分类", key="add_category_btn"):
+            if new_cat_name and new_cat_name.strip():
+                add_category(new_cat_name.strip(), new_cat_icon or "📋")
+                st.rerun()
+            else:
+                st.error("请输入分类名称")
+    
+    # ==================== 右侧：内容区 ====================
+    with col_right:
+        # ==================== 未选中分类 ====================
+        if st.session_state.selected_category_id is None:
+            # ===== AI 推荐菜 =====
+            with st.expander("🤖 AI 推荐菜", expanded=False):
+                ai_mode = st.radio(
+                    "选择模式",
+                    ["🧠 按食材推荐", "🔍 按菜名查询"],
+                    horizontal=True,
+                    key="ai_mode_radio"
+                )
+                st.session_state.ai_mode = "食材推荐" if ai_mode == "🧠 按食材推荐" else "菜名查询"
+                
+                # ===== 输入区 =====
+                if st.session_state.ai_mode == "食材推荐":
+                    count = st.slider("菜品数量", min_value=1, max_value=10, value=5, key="ai_count_right")
+                    ai_input = st.text_input("输入食材（用中文逗号或空格分隔）", key="ai_ingredients_right", placeholder="例如：土豆,鸡蛋")
+                else:
+                    count = st.slider("菜品数量", min_value=1, max_value=5, value=1, key="ai_variant_count")
+                    ai_input = st.text_input("输入菜名", key="ai_dish_name", placeholder="例如：番茄炒蛋")
+                
+                # ===== 推荐和换一批按钮 =====
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("推荐", key="ai_recommend_btn"):
+                        if not ai_input.strip():
+                            st.error("请输入内容")
+                        else:
+                            dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+                            if not dashscope.api_key:
+                                st.error("未找到 API Key，请检查 .env 文件")
+                            else:
+                                # 清空旧的推荐列表
+                                st.session_state.ai_global_result = []
+                                st.session_state.recommended_names = []
+                                st.session_state.editing_category_idx = None
+                                with st.spinner("AI 正在思考..."):
+                                    if st.session_state.ai_mode == "食材推荐":
+                                        prompt = f"""你是一个厨艺高超的AI厨师。请根据以下食材推荐 {count} 道菜（必须严格生成 {count} 道，不要多也不要少）：
+食材：{ai_input}
 
-    if st.button("🏠 返回首页"):
+请按以下格式返回，每道菜之间用"---"分隔：
+菜名：XXX（如果是变体请注明，如 番茄炒蛋 - 家常版）
+类别：XXX（从以下选择：主食、热菜、凉菜、汤类、减肥专栏）
+食材：XXX, XXX, XXX（请标注精确用量，按两人份，食材要详细到克、毫升、个等）
+做法：
+1. XXX（详细步骤，包括火候、时间、状态判断，越详细越好）
+---
+（下一道菜）
+"""
+                                    else:
+                                        prompt = f"""请提供菜名《{ai_input}》的 {count} 个不同版本的详细做法（必须严格生成 {count} 个版本），每个版本可以有不同的口味变化，但菜名请统一为“{ai_input}”，后面加括号注明特色（如“（酸甜口味）”、“（少油版）”等），不要使用“家常版”、“快手版”等字样作为菜名后缀。要求每个版本都包含食材用量（按两人份）和详细步骤，并为每个版本指定一个类别（主食、热菜、凉菜、汤类、减肥专栏）。
+
+请按以下格式返回，每个版本之间用"---"分隔：
+菜名：{ai_input}（特色描述）
+类别：XXX
+食材：XXX, XXX, XXX（请标注精确用量，按两人份，食材要详细到克、毫升、个等）
+做法：
+1. XXX（详细步骤，包括火候、时间、状态判断，越详细越好）
+---
+菜名：{ai_input}（另一个特色描述）
+类别：XXX
+食材：XXX, XXX, XXX
+做法：
+1. XXX
+---
+（以此类推）
+"""
+                                    try:
+                                        response = Generation.call(
+                                            model="qwen-turbo",
+                                            messages=[{"role": "user", "content": prompt}],
+                                            result_format="message"
+                                        )
+                                        if response.status_code == 200:
+                                            content = response.output.choices[0].message.content
+                                            recipes = parse_multiple_recipes(content)
+                                            if recipes:
+                                                # 如果 AI 返回的数量多于 count，截取前 count 个
+                                                if len(recipes) > count:
+                                                    recipes = recipes[:count]
+                                                # 记录所有菜名
+                                                for r in recipes:
+                                                    if r["name"] not in st.session_state.recommended_names:
+                                                        st.session_state.recommended_names.append(r["name"])
+                                                st.session_state.ai_global_result = recipes
+                                                st.session_state.ai_global_raw = None
+                                            else:
+                                                st.session_state.ai_global_raw = content
+                                            st.rerun()
+                                        else:
+                                            st.error(f"AI 推荐失败：{response.message}")
+                                    except Exception as e:
+                                        st.error(f"AI 推荐出错：{e}")
+                
+                with col_btn2:
+                    if st.button("🔄 换一批", key="ai_refresh_btn"):
+                        if not ai_input.strip():
+                            st.error("请先输入内容")
+                        else:
+                            dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+                            if not dashscope.api_key:
+                                st.error("未找到 API Key，请检查 .env 文件")
+                            else:
+                                with st.spinner("AI 正在思考..."):
+                                    # 排除已推荐菜名
+                                    exclude_names = st.session_state.recommended_names
+                                    exclude_note = ""
+                                    if exclude_names:
+                                        exclude_note = f"\n请不要再推荐以下菜品：{', '.join(exclude_names)}"
+                                    
+                                    if st.session_state.ai_mode == "食材推荐":
+                                        count = st.session_state.get("ai_count_right", 5)
+                                        prompt = f"""你是一个厨艺高超的AI厨师。请根据以下食材推荐 {count} 道菜（必须严格生成 {count} 道，不要多也不要少）：
+食材：{ai_input}{exclude_note}
+
+请按以下格式返回，每道菜之间用"---"分隔：
+菜名：XXX（如果是变体请注明，如 番茄炒蛋 - 家常版）
+类别：XXX（从以下选择：主食、热菜、凉菜、汤类、减肥专栏）
+食材：XXX, XXX, XXX（请标注精确用量，按两人份，食材要详细到克、毫升、个等）
+做法：
+1. XXX（详细步骤，包括火候、时间、状态判断，越详细越好）
+---
+（下一道菜）
+"""
+                                    else:
+                                        count = st.session_state.get("ai_variant_count", 1)
+                                        prompt = f"""请提供菜名《{ai_input}》的 {count} 个不同版本的详细做法（必须严格生成 {count} 个版本），每个版本可以有不同的口味变化，但菜名请统一为“{ai_input}”，后面加括号注明特色（如“（酸甜口味）”、“（少油版）”等），不要使用“家常版”、“快手版”等字样作为菜名后缀。要求每个版本都包含食材用量（按两人份）和详细步骤，并为每个版本指定一个类别（主食、热菜、凉菜、汤类、减肥专栏）。{exclude_note}
+
+请按以下格式返回，每个版本之间用"---"分隔：
+菜名：{ai_input}（特色描述）
+类别：XXX
+食材：XXX, XXX, XXX（请标注精确用量，按两人份，食材要详细到克、毫升、个等）
+做法：
+1. XXX（详细步骤，包括火候、时间、状态判断，越详细越好）
+---
+菜名：{ai_input}（另一个特色描述）
+类别：XXX
+食材：XXX, XXX, XXX
+做法：
+1. XXX
+---
+（以此类推）
+"""
+                                    try:
+                                        response = Generation.call(
+                                            model="qwen-turbo",
+                                            messages=[{"role": "user", "content": prompt}],
+                                            result_format="message"
+                                        )
+                                        if response.status_code == 200:
+                                            content = response.output.choices[0].message.content
+                                            recipes = parse_multiple_recipes(content)
+                                            if recipes:
+                                                # 如果 AI 返回的数量多于 count，截取前 count 个
+                                                if len(recipes) > count:
+                                                    recipes = recipes[:count]
+                                                # 记录新菜名到推荐历史
+                                                for r in recipes:
+                                                    if r["name"] not in st.session_state.recommended_names:
+                                                        st.session_state.recommended_names.append(r["name"])
+                                                # 追加到现有列表
+                                                if st.session_state.ai_global_result is None:
+                                                    st.session_state.ai_global_result = []
+                                                st.session_state.ai_global_result.extend(recipes)
+                                                st.session_state.ai_global_raw = None
+                                            else:
+                                                st.session_state.ai_global_raw = content
+                                            st.rerun()
+                                        else:
+                                            st.error(f"AI 推荐失败：{response.message}")
+                                    except Exception as e:
+                                        st.error(f"AI 推荐出错：{e}")
+                
+                # ===== 显示推荐结果 =====
+                if st.session_state.ai_global_result:
+                    result_list = st.session_state.ai_global_result
+                    st.divider()
+                    
+                    # 标题和关闭按钮同一行
+                    col_title, col_close = st.columns([5, 1])
+                    with col_title:
+                        st.subheader(f"📋 推荐结果（共 {len(result_list)} 道）")
+                        if st.session_state.recommended_names and st.session_state.ai_mode == "食材推荐":
+                            st.caption(f"已排除：{', '.join(st.session_state.recommended_names)}")
+                    with col_close:
+                        if st.button("❌ 关闭", key="close_ai_result"):
+                            st.session_state.ai_global_result = []
+                            st.session_state.ai_global_raw = None
+                            st.session_state.editing_category_idx = None
+                            st.rerun()
+                    
+                    # 遍历显示每道菜
+                    for idx, recipe in enumerate(result_list):
+                        with st.expander(f"**{recipe['name']}**"):
+                            # 显示类别，带修改按钮
+                            col_cat, col_edit = st.columns([3, 1])
+                            with col_cat:
+                                st.markdown(f"**类别：{recipe['category']}**")
+                            with col_edit:
+                                # 修改类别按钮，使用唯一 key
+                                if st.button("✏️ 修改", key=f"edit_cat_{idx}_{recipe['name']}"):
+                                    st.session_state.editing_category_idx = idx
+                                    st.rerun()
+                            
+                            # 如果当前正在修改此菜的类别
+                            if st.session_state.editing_category_idx == idx:
+                                # 提供下拉选择新类别
+                                new_cat = st.selectbox(
+                                    "选择新类别",
+                                    options=category_names,
+                                    index=category_names.index(recipe['category']) if recipe['category'] in category_names else 0,
+                                    key=f"new_cat_select_{idx}_{recipe['name']}"
+                                )
+                                col_save_cat, col_cancel_cat = st.columns(2)
+                                with col_save_cat:
+                                    if st.button("保存类别", key=f"save_cat_{idx}_{recipe['name']}"):
+                                        # 更新当前菜品的类别
+                                        st.session_state.ai_global_result[idx]['category'] = new_cat
+                                        st.session_state.editing_category_idx = None
+                                        st.rerun()
+                                with col_cancel_cat:
+                                    if st.button("取消", key=f"cancel_cat_{idx}_{recipe['name']}"):
+                                        st.session_state.editing_category_idx = None
+                                        st.rerun()
+                            
+                            st.markdown(f"**食材**：\n{recipe['ingredients']}")
+                            st.markdown(f"**做法**：\n{recipe['steps']}")
+                            
+                            # 添加和跳过按钮
+                            if categories:
+                                col_confirm, col_skip = st.columns(2)
+                                with col_confirm:
+                                    if st.button(f"✅ 添加此菜", key=f"confirm_ai_{idx}_{recipe['name']}"):
+                                        # 将类别名称转换为 category_id
+                                        cat_name_to_id = {cat[1]: cat[0] for cat in categories}  # categories 是 (id, name, icon, sort_order)
+                                        cat_id = cat_name_to_id.get(recipe['category'])
+                                        if cat_id is None:
+                                            st.error(f"类别“{recipe['category']}”不存在，请先在左侧添加该分类")
+                                        else:
+                                            add_recipe(recipe['name'], recipe['ingredients'], recipe['steps'], cat_id)
+                                            st.session_state.ai_global_result.pop(idx)
+                                            st.success(f"✅ 已添加 {recipe['name']}")
+                                            st.rerun()
+                                with col_skip:
+                                    if st.button(f"❌ 跳过", key=f"skip_ai_{idx}_{recipe['name']}"):
+                                        st.session_state.ai_global_result.pop(idx)
+                                        st.rerun()
+                            else:
+                                st.warning("请先在左侧添加分类")
+                
+                elif st.session_state.ai_global_raw is not None:
+                    raw = st.session_state.ai_global_raw
+                    st.divider()
+                    # 关闭按钮同样适用于原始内容
+                    col_title, col_close = st.columns([5, 1])
+                    with col_title:
+                        st.warning("⚠️ AI 返回格式未能自动解析，以下是原始内容，您可以手动整理后添加")
+                    with col_close:
+                        if st.button("❌ 关闭", key="close_ai_raw"):
+                            st.session_state.ai_global_raw = None
+                            st.rerun()
+                    st.code(raw, language="text")
+                    with st.form("manual_add_from_ai"):
+                        st.text_input("菜名", value=ai_input, key="manual_ai_name")
+                        st.text_area("食材（含用量）", height=100, key="manual_ai_ingredients", placeholder="请从上方内容中提取食材")
+                        st.text_area("做法", height=150, key="manual_ai_steps", value=raw, placeholder="做法内容")
+                        time_est = st.text_input("预计用时（分钟）", placeholder="30", key="manual_ai_time")
+                        difficulty = st.selectbox("难度", ["", "简单", "中等", "困难"], key="manual_ai_diff")
+                        if categories:
+                            cat_options = {cat_id: f"{icon} {name}" for cat_id, name, icon, _ in categories}
+                            cat_choice = st.selectbox("所属分类", options=list(cat_options.keys()), format_func=lambda x: cat_options.get(x, "未分类"), key="manual_ai_cat")
+                        else:
+                            cat_choice = None
+                            st.warning("请先在左侧添加分类")
+                        submitted = st.form_submit_button("💾 手动添加此菜")
+                        if submitted:
+                            if cat_choice is None:
+                                st.error("请先添加分类")
+                            else:
+                                name = st.session_state.get("manual_ai_name", "")
+                                ingredients = st.session_state.get("manual_ai_ingredients", "")
+                                steps = st.session_state.get("manual_ai_steps", "")
+                                if not name or not ingredients or not steps:
+                                    st.error("请填写完整信息（菜名、食材、做法）")
+                                else:
+                                    add_recipe(name, ingredients, steps, cat_choice, time_est, difficulty)
+                                    st.session_state.ai_global_raw = None
+                                    st.success(f"✅ 已添加 {name}")
+                                    st.rerun()
+            
+            # ===== 新增菜 =====
+            with st.expander("➕ 新增菜", expanded=True):
+                input_mode = st.radio("选择输入方式", ["📝 手动输入", "📷 上传图片识别"], horizontal=True, key="input_mode")
+                
+                if input_mode == "📝 手动输入":
+                    with st.form("add_recipe_right"):
+                        name = st.text_input("菜名")
+                        ingredients = st.text_area("食材（含用量）", height=120, placeholder="例如：土豆 300g\n鸡蛋 2个\n盐 5g\n生抽 10ml")
+                        steps = st.text_area("做法", height=150, placeholder="1. 土豆去皮切丝...\n2. 热锅倒油...")
+                        time_est = st.text_input("预计用时（分钟）", placeholder="30")
+                        difficulty = st.selectbox("难度", ["", "简单", "中等", "困难"])
+                        cat_options = {cat_id: f"{icon} {name}" for cat_id, name, icon, _ in categories}
+                        if cat_options:
+                            cat_choice = st.selectbox("所属分类", options=list(cat_options.keys()), format_func=lambda x: cat_options.get(x, "未分类"))
+                        else:
+                            cat_choice = None
+                            st.warning("请先在左侧添加分类")
+                        submitted = st.form_submit_button("添加")
+                        if submitted:
+                            if not name or not ingredients or not steps:
+                                st.error("请填写完整信息")
+                            elif cat_choice is None:
+                                st.error("请先添加分类")
+                            else:
+                                add_recipe(name, ingredients, steps, cat_choice, time_est, difficulty)
+                                st.success(f"✅ 已添加 {name}")
+                                st.rerun()
+                
+                else:  # 图片识别模式
+                    st.markdown("**上传包含菜名和做法的截图（如抖音截图）**")
+                    uploaded_file = st.file_uploader("选择图片", type=["jpg", "jpeg", "png", "webp"], key="recipe_image_upload")
+                    
+                    if uploaded_file is not None:
+                        st.image(uploaded_file, width=300)
+                        
+                        if st.button("🔍 识别图片", key="recognize_image"):
+                            with st.spinner("AI 正在识别图片..."):
+                                dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+                                if not dashscope.api_key:
+                                    st.error("未找到 API Key，请检查 .env 文件")
+                                else:
+                                    img_bytes = uploaded_file.read()
+                                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                                    img_type = uploaded_file.type.split('/')[-1] if uploaded_file.type else 'jpeg'
+                                    img_url = f"data:image/{img_type};base64,{img_base64}"
+                                    
+                                    prompt = """请识别这张图片中的菜谱信息。如果图片中包含菜名、食材和做法，请按以下格式返回：
+菜名：XXX
+类别：XXX（从以下选择：主食、热菜、凉菜、汤类、减肥专栏）
+食材：XXX, XXX, XXX（请标注精确用量，按两人份，食材要详细到克、毫升、个等）
+做法：
+1. XXX（详细步骤，包括火候、时间、状态判断，越详细越好）
+
+如果图片中没有菜谱信息，请返回：未识别到菜谱信息"""
+                                    
+                                    try:
+                                        response = Generation.call(
+                                            model="qwen-vl-plus",
+                                            messages=[
+                                                {
+                                                    "role": "user",
+                                                    "content": [
+                                                        {"image": img_url},
+                                                        {"text": prompt}
+                                                    ]
+                                                }
+                                            ],
+                                            result_format="message"
+                                        )
+                                        if response.status_code == 200:
+                                            content = response.output.choices[0].message.content
+                                            st.session_state.image_recog_result = content
+                                            st.rerun()
+                                        else:
+                                            st.error(f"识别失败：{response.message}")
+                                    except Exception as e:
+                                        st.error(f"识别出错：{e}")
+                        
+                        if st.session_state.image_recog_result:
+                            result_text = st.session_state.image_recog_result
+                            st.divider()
+                            st.subheader("📋 识别结果")
+                            st.text(result_text)
+                            
+                            lines = result_text.strip().split("\n")
+                            recog_name = ""
+                            recog_ingredients = ""
+                            recog_steps = ""
+                            recog_category = ""
+                            current_section = None
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                if "菜名" in line:
+                                    if "：" in line:
+                                        recog_name = line.split("：")[-1].strip()
+                                    elif ":" in line:
+                                        recog_name = line.split(":")[-1].strip()
+                                elif "类别" in line:
+                                    if "：" in line:
+                                        recog_category = line.split("：")[-1].strip()
+                                    elif ":" in line:
+                                        recog_category = line.split(":")[-1].strip()
+                                elif "食材" in line:
+                                    if "：" in line:
+                                        recog_ingredients = line.split("：")[-1].strip()
+                                    elif ":" in line:
+                                        recog_ingredients = line.split(":")[-1].strip()
+                                    else:
+                                        recog_ingredients = line
+                                elif "做法" in line:
+                                    if "：" in line:
+                                        recog_steps = line.split("：")[-1].strip()
+                                    elif ":" in line:
+                                        recog_steps = line.split(":")[-1].strip()
+                                    else:
+                                        recog_steps = line
+                                elif recog_steps and recog_name and recog_ingredients:
+                                    recog_steps += "\n" + line
+                            
+                            if recog_name and recog_ingredients and recog_steps:
+                                st.success("✅ 识别成功！请确认信息后点击「保存到菜单」")
+                                with st.form("add_from_image"):
+                                    st.text_input("菜名", value=recog_name, key="img_name")
+                                    st.text_area("食材", value=recog_ingredients, height=120, key="img_ingredients")
+                                    st.text_area("做法", value=recog_steps, height=150, key="img_steps")
+                                    time_est = st.text_input("预计用时（分钟）", placeholder="30", key="img_time")
+                                    difficulty = st.selectbox("难度", ["", "简单", "中等", "困难"], key="img_diff")
+                                    # 类别选择
+                                    cat_options = {cat_id: f"{icon} {name}" for cat_id, name, icon, _ in categories}
+                                    if cat_options:
+                                        # 如果识别出类别，尝试匹配
+                                        if recog_category and recog_category in [name for _, name, _, _ in categories]:
+                                            default_cat = next(cat_id for cat_id, name, _, _ in categories if name == recog_category)
+                                        else:
+                                            default_cat = list(cat_options.keys())[0] if cat_options else None
+                                        cat_choice = st.selectbox("所属分类", options=list(cat_options.keys()), format_func=lambda x: cat_options.get(x, "未分类"), key="img_cat", index=list(cat_options.keys()).index(default_cat) if default_cat in cat_options else 0)
+                                    else:
+                                        cat_choice = None
+                                        st.warning("请先在左侧添加分类")
+                                    submitted = st.form_submit_button("💾 保存到菜单")
+                                    if submitted:
+                                        if cat_choice is None:
+                                            st.error("请先添加分类")
+                                        else:
+                                            add_recipe(recog_name, recog_ingredients, recog_steps, cat_choice, time_est, difficulty)
+                                            st.session_state.image_recog_result = None
+                                            st.success(f"✅ 已添加 {recog_name}")
+                                            st.rerun()
+                            else:
+                                st.info("识别结果中未找到完整的菜谱信息，请手动输入或重试")
+        
+        # ==================== 已选中分类 ====================
+        else:
+            cat_info = get_category_name(st.session_state.selected_category_id)
+            if cat_info and cat_info[0]:
+                cat_name, icon = cat_info
+                st.markdown(f"### {icon} {cat_name}")
+                
+                if st.button("← 返回所有分类", key="back_to_categories"):
+                    st.session_state.selected_category_id = None
+                    st.session_state.from_category_click = False
+                    st.rerun()
+                
+                recipes = get_recipes_by_category(st.session_state.selected_category_id)
+                
+                if recipes:
+                    for recipe_id, name, ingredients, steps, cook_count, time_est, difficulty in recipes:
+                        with st.expander(f"**{name}**"):
+                            st.markdown(f"**食材**：\n{ingredients}")
+                            st.markdown(f"**做法**：\n{steps}")
+                            if time_est:
+                                st.caption(f"⏱️ 约 {time_est} 分钟")
+                            if difficulty:
+                                st.caption(f"📊 难度：{difficulty}")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                if st.button("✅ 做过", key=f"cook_{recipe_id}"):
+                                    increment_cook_count(recipe_id)
+                                    st.success("已记录")
+                                    st.rerun()
+                            with col2:
+                                if st.button("✏️ 修改", key=f"edit_recipe_{recipe_id}"):
+                                    st.session_state.edit_recipe_id = recipe_id
+                                    st.rerun()
+                            with col3:
+                                if st.button("🗑️ 删除", key=f"del_recipe_{recipe_id}"):
+                                    delete_recipe(recipe_id)
+                                    st.rerun()
+                            with col4:
+                                if cook_count:
+                                    st.caption(f"已做 {cook_count} 次")
+                            
+                            if st.session_state.edit_recipe_id == recipe_id:
+                                st.divider()
+                                st.subheader(f"✏️ 修改 {name}")
+                                with st.form(f"edit_recipe_form_{recipe_id}"):
+                                    new_name = st.text_input("菜名", value=name)
+                                    new_ingredients = st.text_area("食材", value=ingredients, height=120)
+                                    new_steps = st.text_area("做法", value=steps, height=150)
+                                    new_time = st.text_input("预计用时", value=time_est or "")
+                                    new_diff = st.selectbox("难度", ["", "简单", "中等", "困难"], index=0 if not difficulty else ["", "简单", "中等", "困难"].index(difficulty))
+                                    cat_options = {cid: f"{cicon} {cname}" for cid, cname, cicon, _ in categories}
+                                    if cat_options:
+                                        new_cat = st.selectbox("所属分类", options=list(cat_options.keys()), 
+                                                              format_func=lambda x: cat_options.get(x, "未分类"),
+                                                              index=list(cat_options.keys()).index(st.session_state.selected_category_id) if st.session_state.selected_category_id in cat_options else 0)
+                                    else:
+                                        new_cat = st.session_state.selected_category_id
+                                    col_save, col_cancel = st.columns(2)
+                                    with col_save:
+                                        if st.form_submit_button("保存修改"):
+                                            if new_name and new_name.strip():
+                                                update_recipe(recipe_id, new_name.strip(), new_ingredients, new_steps, new_cat, new_time, new_diff)
+                                                st.session_state.edit_recipe_id = None
+                                                st.success("✅ 已更新")
+                                                st.rerun()
+                                            else:
+                                                st.error("菜名不能为空")
+                                    with col_cancel:
+                                        if st.form_submit_button("取消"):
+                                            st.session_state.edit_recipe_id = None
+                                            st.rerun()
+                else:
+                    st.info(f"📭 {cat_name} 分类下还没有菜，快来添加吧！")
+            else:
+                st.error("分类不存在，请重新选择")
+                st.session_state.selected_category_id = None
+                st.rerun()
+    
+    # ==================== 返回首页按钮（底部） ====================
+    st.divider()
+    if st.button("🏠 返回首页", key="back_home_cook"):
         st.session_state.page = "home"
+        st.session_state.selected_category_id = None
+        st.session_state.ai_global_result = []
+        st.session_state.ai_global_raw = None
+        st.session_state.recommended_names = []
+        st.session_state.image_recog_result = None
+        st.session_state.editing_category_idx = None
         st.rerun()
 
 # ==================== 旅行板块 ====================
