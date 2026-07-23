@@ -10,7 +10,19 @@ from streamlit_folium import st_folium
 import json
 import re
 import collections
+import requests
 
+def test_weather():
+    api_key = "90cf2b0c3ed843adb8a902e23f0684bd"
+    # 用经纬度测试杭州（经度,纬度格式）
+    url = f"https://devapi.qweather.com/v7/weather/now?location=30.27,120.15&key={api_key}"
+    print(f"测试 URL: {url}")
+    try:
+        response = requests.get(url, timeout=10)
+        print(f"状态码: {response.status_code}")
+        print(f"返回内容: {response.text[:500]}")
+    except Exception as e:
+        print(f"请求失败: {e}")
 load_dotenv()
 
 # ==================== 数据库配置 ====================
@@ -305,29 +317,29 @@ def cook_page():
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, ingredients, steps, cook_count, time_estimate, difficulty FROM recipes WHERE category_id = %s ORDER BY name",
+            "SELECT id, name, ingredients, steps, cook_count FROM recipes WHERE category_id = %s ORDER BY name",
             (category_id,)
         )
         rows = cursor.fetchall()
         conn.close()
         return rows
 
-    def add_recipe(name, ingredients, steps, category_id, time_estimate="", difficulty=""):
+    def add_recipe(name, ingredients, steps, category_id):
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO recipes (name, ingredients, steps, category_id, time_estimate, difficulty) VALUES (%s, %s, %s, %s, %s, %s)",
-            (name, ingredients, steps, category_id, time_estimate, difficulty)
+            "INSERT INTO recipes (name, ingredients, steps, category_id) VALUES (%s, %s, %s, %s)",
+            (name, ingredients, steps, category_id)
         )
         conn.commit()
         conn.close()
 
-    def update_recipe(recipe_id, name, ingredients, steps, category_id, time_estimate="", difficulty=""):
+    def update_recipe(recipe_id, name, ingredients, steps, category_id):
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE recipes SET name = %s, ingredients = %s, steps = %s, category_id = %s, time_estimate = %s, difficulty = %s WHERE id = %s",
-            (name, ingredients, steps, category_id, time_estimate, difficulty, recipe_id)
+            "UPDATE recipes SET name = %s, ingredients = %s, steps = %s, category_id = %s WHERE id = %s",
+            (name, ingredients, steps, category_id, recipe_id)
         )
         conn.commit()
         conn.close()
@@ -384,7 +396,7 @@ def cook_page():
         cursor = conn.cursor()
         conditions = " AND ".join(["ingredients LIKE %s"] * len(normalized))
         sql = f"""
-            SELECT id, name, ingredients, steps, cook_count, time_estimate, difficulty, category_id 
+            SELECT id, name, ingredients, steps, cook_count, category_id 
             FROM recipes 
             WHERE {conditions} 
             ORDER BY name
@@ -398,7 +410,7 @@ def cook_page():
         for row in rows:
             cat_name = "未分类"
             for cid, cname, _, _ in get_categories():
-                if cid == row[7]:
+                if cid == row[5]:
                     cat_name = cname
                     break
             result.append({
@@ -407,10 +419,8 @@ def cook_page():
                 "ingredients": row[2],
                 "steps": row[3],
                 "cook_count": row[4],
-                "time_estimate": row[5],
-                "difficulty": row[6],
                 "category": cat_name,
-                "category_id": row[7]
+                "category_id": row[5]
             })
         return result
 
@@ -422,7 +432,7 @@ def cook_page():
         cursor = conn.cursor()
         conditions = " AND ".join(["name LIKE %s"] * len(keywords))
         sql = f"""
-            SELECT id, name, ingredients, steps, cook_count, time_estimate, difficulty, category_id 
+            SELECT id, name, ingredients, steps, cook_count, category_id 
             FROM recipes 
             WHERE {conditions} 
             ORDER BY name
@@ -435,7 +445,7 @@ def cook_page():
         for row in rows:
             cat_name = "未分类"
             for cid, cname, _, _ in get_categories():
-                if cid == row[7]:
+                if cid == row[5]:
                     cat_name = cname
                     break
             result.append({
@@ -444,10 +454,8 @@ def cook_page():
                 "ingredients": row[2],
                 "steps": row[3],
                 "cook_count": row[4],
-                "time_estimate": row[5],
-                "difficulty": row[6],
                 "category": cat_name,
-                "category_id": row[7]
+                "category_id": row[5]
             })
         return result
 
@@ -573,7 +581,7 @@ def cook_page():
     if st.session_state.prev_result_len != current_len:
         st.session_state.editing_category_idx = None
         st.session_state.prev_result_len = current_len
-        # 同步 ai expander 状态
+        # 同步 ai expander 状态（默认折叠）
         new_keys = set()
         for idx, recipe in enumerate(st.session_state.ai_global_result):
             base_key = f"{idx}_{recipe['name']}"
@@ -583,7 +591,6 @@ def cook_page():
                 del st.session_state.ai_expander_state[key]
         for key in new_keys:
             if key not in st.session_state.ai_expander_state:
-                # 默认折叠（False）
                 st.session_state.ai_expander_state[key] = False
 
     # ==================== 左右两栏布局 ====================
@@ -660,7 +667,6 @@ def cook_page():
             except ValueError:
                 radio_index = 0
 
-            # AI推荐菜展开状态：默认展开
             with st.expander("🤖 AI 推荐菜", expanded=True):
                 ai_mode = st.radio(
                     "选择模式",
@@ -673,7 +679,6 @@ def cook_page():
 
                 # ---------- 模式1 ----------
                 if st.session_state.ai_mode == "按食材推荐":
-                    # 修改默认数量为3，上限为5
                     count = st.slider("菜品数量", min_value=1, max_value=5, value=3, key="ai_count_right")
                     ai_input = st.text_input("输入食材（用中文逗号或空格分隔）", key="ai_ingredients_right", placeholder="例如：土豆,鸡蛋")
 
@@ -956,7 +961,6 @@ def cook_page():
                                     st.markdown(f"**{item['name']}**")
 
                                     # ---- 编辑区域 ----
-                                    # 菜名
                                     new_name = st.text_input(
                                         "菜名",
                                         value=item['name'],
@@ -964,7 +968,6 @@ def cook_page():
                                         placeholder="修改菜名",
                                         label_visibility="collapsed"
                                     )
-                                    # 类别
                                     cat_list = [cat[1] for cat in categories]
                                     current_cat_index = cat_list.index(item['category']) if item['category'] in cat_list else 0
                                     new_category = st.selectbox(
@@ -974,7 +977,6 @@ def cook_page():
                                         key=f"search_cat_{base_key}",
                                         label_visibility="collapsed"
                                     )
-                                    # 食材
                                     new_ingredients = st.text_area(
                                         "食材",
                                         value=item['ingredients'],
@@ -982,7 +984,6 @@ def cook_page():
                                         height=100,
                                         label_visibility="collapsed"
                                     )
-                                    # 做法
                                     new_steps = st.text_area(
                                         "做法",
                                         value=item['steps'],
@@ -991,7 +992,6 @@ def cook_page():
                                         label_visibility="collapsed"
                                     )
 
-                                    # ---- 更新按钮 ----
                                     col_update1, col_update2 = st.columns(2)
                                     with col_update1:
                                         if st.button("💾 更新当前菜", key=f"update_search_{base_key}"):
@@ -1005,7 +1005,6 @@ def cook_page():
                                                 if new_name.strip() != item['name'] and recipe_exists(new_name.strip()):
                                                     st.error(f"❌ 菜名“{new_name}”已存在，请修改")
                                                 else:
-                                                    # 更新到 search_display
                                                     item['name'] = new_name.strip()
                                                     item['category'] = new_category
                                                     item['ingredients'] = new_ingredients.strip()
@@ -1018,7 +1017,7 @@ def cook_page():
                                     st.divider()
 
                                     # ---- 操作按钮 ----
-                                    col_confirm, col_skip, col_detail = st.columns(3)
+                                    col_confirm, col_skip = st.columns(2)
                                     with col_confirm:
                                         if st.button(f"✅ 添加", key=f"confirm_search_{base_key}"):
                                             cat_name_to_id = {cat[1]: cat[0] for cat in categories}
@@ -1035,25 +1034,6 @@ def cook_page():
                                     with col_skip:
                                         if st.button(f"❌ 跳过", key=f"skip_search_{base_key}"):
                                             st.session_state.search_display = [it for it in st.session_state.search_display if it['id'] != item['id']]
-                                            st.rerun()
-                                    with col_detail:
-                                        detail_data = {
-                                            "id": item['id'],
-                                            "name": item['name'],
-                                            "category": item['category'],
-                                            "ingredients": item['ingredients'],
-                                            "steps": item['steps'],
-                                            "time_estimate": item.get('time_estimate', ''),
-                                            "difficulty": item.get('difficulty', ''),
-                                            "cook_count": item.get('cook_count', 0)
-                                        }
-                                        if st.button(f"📖 查看详情", key=f"detail_search_{base_key}"):
-                                            params = {
-                                                "cook_detail": json.dumps(detail_data, ensure_ascii=False),
-                                                "back_search_mode": st.session_state.ai_mode,
-                                                "back_search_keyword": search_keyword.strip()
-                                            }
-                                            st.query_params.update(params)
                                             st.rerun()
                                     st.divider()
                     else:
@@ -1167,7 +1147,7 @@ def cook_page():
 
                                     st.divider()
 
-                                    col_confirm, col_skip, col_detail = st.columns(3)
+                                    col_confirm, col_skip = st.columns(2)
                                     with col_confirm:
                                         if st.button(f"✅ 添加", key=f"confirm_search_{base_key}"):
                                             cat_name_to_id = {cat[1]: cat[0] for cat in categories}
@@ -1184,25 +1164,6 @@ def cook_page():
                                     with col_skip:
                                         if st.button(f"❌ 跳过", key=f"skip_search_{base_key}"):
                                             st.session_state.search_display = [it for it in st.session_state.search_display if it['id'] != item['id']]
-                                            st.rerun()
-                                    with col_detail:
-                                        detail_data = {
-                                            "id": item['id'],
-                                            "name": item['name'],
-                                            "category": item['category'],
-                                            "ingredients": item['ingredients'],
-                                            "steps": item['steps'],
-                                            "time_estimate": item.get('time_estimate', ''),
-                                            "difficulty": item.get('difficulty', ''),
-                                            "cook_count": item.get('cook_count', 0)
-                                        }
-                                        if st.button(f"📖 查看详情", key=f"detail_search_{base_key}"):
-                                            params = {
-                                                "cook_detail": json.dumps(detail_data, ensure_ascii=False),
-                                                "back_search_mode": st.session_state.ai_mode,
-                                                "back_search_keyword": search_keyword.strip()
-                                            }
-                                            st.query_params.update(params)
                                             st.rerun()
                                     st.divider()
                     else:
@@ -1233,7 +1194,6 @@ def cook_page():
                             if expander_key not in st.session_state.ai_expander_state:
                                 st.session_state.ai_expander_state[expander_key] = False
 
-                            # 默认折叠（expanded=False）
                             with st.expander(f"**{recipe['name']}**", expanded=st.session_state.ai_expander_state[expander_key]):
                                 # 菜名
                                 new_name = st.text_input(
@@ -1291,7 +1251,7 @@ def cook_page():
 
                                 st.divider()
 
-                                col_confirm, col_skip, col_detail = st.columns(3)
+                                col_confirm, col_skip = st.columns(2)
                                 with col_confirm:
                                     final_name = st.session_state.get(f"ai_name_{base_key}", recipe['name']).strip()
                                     if not final_name:
@@ -1315,23 +1275,6 @@ def cook_page():
                                 with col_skip:
                                     if st.button(f"❌ 跳过", key=f"skip_ai_{base_key}"):
                                         st.session_state.ai_global_result.pop(idx)
-                                        st.rerun()
-                                with col_detail:
-                                    detail_data = {
-                                        "name": recipe['name'],
-                                        "category": recipe['category'],
-                                        "ingredients": recipe['ingredients'],
-                                        "steps": recipe['steps'],
-                                        "time_estimate": "",
-                                        "difficulty": "",
-                                        "cook_count": 0
-                                    }
-                                    if st.button(f"📖 查看详情", key=f"detail_ai_{base_key}"):
-                                        params = {
-                                            "cook_detail": json.dumps(detail_data, ensure_ascii=False),
-                                            "back_search_mode": st.session_state.ai_mode
-                                        }
-                                        st.query_params.update(params)
                                         st.rerun()
 
                     elif st.session_state.ai_global_raw is not None:
@@ -1618,16 +1561,12 @@ def cook_page():
                 recipes = get_recipes_by_category(st.session_state.selected_category_id)
 
                 if recipes:
-                    for recipe_id, name, ingredients, steps, cook_count, time_est, difficulty in recipes:
+                    for recipe_id, name, ingredients, steps, cook_count in recipes:
                         with st.expander(f"**{name}**"):
                             st.markdown(f"**食材**：\n{ingredients}")
                             st.markdown(f"**做法**：\n{steps}")
-                            if time_est:
-                                st.caption(f"⏱️ 约 {time_est} 分钟")
-                            if difficulty:
-                                st.caption(f"📊 难度：{difficulty}")
 
-                            col1, col2, col3, col4 = st.columns(4)
+                            col1, col2, col3 = st.columns(3)
                             with col1:
                                 if st.button("✅ 做过", key=f"cook_{recipe_id}"):
                                     increment_cook_count(recipe_id)
@@ -1641,9 +1580,6 @@ def cook_page():
                                 if st.button("🗑️ 删除", key=f"del_recipe_{recipe_id}"):
                                     delete_recipe(recipe_id)
                                     st.rerun()
-                            with col4:
-                                if cook_count:
-                                    st.caption(f"已做 {cook_count} 次")
 
                             if st.session_state.edit_recipe_id == recipe_id:
                                 st.divider()
@@ -1652,8 +1588,6 @@ def cook_page():
                                     new_name = st.text_input("菜名", value=name)
                                     new_ingredients = st.text_area("食材", value=ingredients, height=120)
                                     new_steps = st.text_area("做法", value=steps, height=150)
-                                    new_time = st.text_input("预计用时", value=time_est or "")
-                                    new_diff = st.selectbox("难度", ["", "简单", "中等", "困难"], index=0 if not difficulty else ["", "简单", "中等", "困难"].index(difficulty))
                                     cat_options = {cid: f"{cicon} {cname}" for cid, cname, cicon, _ in categories}
                                     if cat_options:
                                         new_cat = st.selectbox("所属分类", options=list(cat_options.keys()),
@@ -1665,7 +1599,7 @@ def cook_page():
                                     with col_save:
                                         if st.form_submit_button("保存修改"):
                                             if new_name and new_name.strip():
-                                                update_recipe(recipe_id, new_name.strip(), new_ingredients, new_steps, new_cat, new_time, new_diff)
+                                                update_recipe(recipe_id, new_name.strip(), new_ingredients, new_steps, new_cat)
                                                 st.session_state.edit_recipe_id = None
                                                 st.success("✅ 已更新")
                                                 st.rerun()
@@ -1682,14 +1616,40 @@ def cook_page():
                 st.session_state.selected_category_id = None
                 st.rerun()
 
-
 # ==================== 旅行板块 ====================
 def travel_page():
     import folium
     from streamlit_folium import st_folium
     import datetime
     import collections
-    
+    import os
+    import hashlib
+
+    # ==================== 初始化批量删除状态 ====================
+    if "delete_mode" not in st.session_state:
+        st.session_state.delete_mode = False
+    if "selected_photos" not in st.session_state:
+        st.session_state.selected_photos = set()
+    if "select_all_dates" not in st.session_state:
+        st.session_state.select_all_dates = set()
+
+    # ==================== 回调函数：切换单张照片选中状态 ====================
+    def toggle_photo_selection(photo_path):
+        if photo_path in st.session_state.selected_photos:
+            st.session_state.selected_photos.remove(photo_path)
+        else:
+            st.session_state.selected_photos.add(photo_path)
+
+    # ==================== 回调函数：切换某日期的全选状态 ====================
+    def toggle_date_selection(date_str, photo_paths):
+        all_selected = all(p in st.session_state.selected_photos for p in photo_paths)
+        if all_selected:
+            for p in photo_paths:
+                st.session_state.selected_photos.discard(p)
+        else:
+            for p in photo_paths:
+                st.session_state.selected_photos.add(p)
+
     # ==================== 如果正在查看城市详情，直接渲染详情页 ====================
     if "city_detail" in st.query_params:
         city_name = st.query_params["city_detail"]
@@ -1698,6 +1658,9 @@ def travel_page():
         st.caption("点击下方「返回旅行地图」回到地图页面")
         
         if st.button("← 返回旅行地图", key="back_to_map_from_detail"):
+            st.session_state.delete_mode = False
+            st.session_state.selected_photos = set()
+            st.session_state.select_all_dates = set()
             st.query_params.clear()
             st.rerun()
         
@@ -1742,18 +1705,71 @@ def travel_page():
             st.success("✅ 路线已保存")
             st.rerun()
         
-        # 照片墙
+        # ==================== 照片墙 ====================
         st.subheader("📸 照片墙")
+        
+        # ---- 批量删除控制栏 ----
+        col_action1, col_action2, col_action3 = st.columns([2, 2, 1])
+        with col_action1:
+            if st.button("🗑️ 批量删除" if not st.session_state.delete_mode else "❌ 取消选择", key="toggle_delete_mode"):
+                st.session_state.delete_mode = not st.session_state.delete_mode
+                if not st.session_state.delete_mode:
+                    st.session_state.selected_photos = set()
+                    st.session_state.select_all_dates = set()
+                st.rerun()
+        with col_action2:
+            if st.session_state.delete_mode and st.session_state.selected_photos:
+                if st.button(f"✅ 确认删除 ({len(st.session_state.selected_photos)}张)", key="confirm_batch_delete"):
+                    conn = pymysql.connect(**DB_CONFIG)
+                    cursor = conn.cursor()
+                    deleted_paths = set()
+                    for photo_path in list(st.session_state.selected_photos):
+                        try:
+                            cursor.execute("DELETE FROM city_photos WHERE city_name = %s AND photo_path = %s", (city_name, photo_path))
+                            if cursor.rowcount > 0:
+                                deleted_paths.add(photo_path)
+                                if os.path.exists(photo_path):
+                                    try:
+                                        os.remove(photo_path)
+                                    except:
+                                        pass
+                        except Exception as e:
+                            st.error(f"删除 {photo_path} 失败：{e}")
+                    conn.commit()
+                    conn.close()
+                    st.session_state.selected_photos.difference_update(deleted_paths)
+                    if not st.session_state.selected_photos:
+                        st.session_state.delete_mode = False
+                    st.success(f"✅ 已删除 {len(deleted_paths)} 张照片")
+                    st.rerun()
+        with col_action3:
+            if st.session_state.delete_mode:
+                st.caption(f"已选 {len(st.session_state.selected_photos)} 张")
+        
+        # ---- 上传区域 ----
         upload_option = st.radio("选择上传方式", ["本地文件", "图片链接"], horizontal=True, key="detail_upload_option")
+        
+        if "upload_counter" not in st.session_state:
+            st.session_state.upload_counter = 0
+        
         if upload_option == "本地文件":
-            uploaded_files = st.file_uploader("选择照片", type=["jpg", "jpeg", "png", "gif"], accept_multiple_files=True, key="detail_file_uploader")
+            file_key = f"detail_file_uploader_{st.session_state.upload_counter}"
+            uploaded_files = st.file_uploader(
+                "选择照片",
+                type=["jpg", "jpeg", "png", "gif"],
+                accept_multiple_files=True,
+                key=file_key
+            )
             if uploaded_files and st.button("上传照片", key="detail_upload_local"):
                 import os
                 upload_dir = "static/uploads"
                 if not os.path.exists(upload_dir):
                     os.makedirs(upload_dir)
                 for file in uploaded_files:
-                    file_path = os.path.join(upload_dir, f"{city_name}_{file.name}")
+                    base_name, ext = os.path.splitext(file.name)
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    unique_name = f"{city_name}_{timestamp}_{base_name}{ext}"
+                    file_path = os.path.join(upload_dir, unique_name)
                     with open(file_path, "wb") as f:
                         f.write(file.getbuffer())
                     conn = pymysql.connect(**DB_CONFIG)
@@ -1765,6 +1781,7 @@ def travel_page():
                     conn.commit()
                     conn.close()
                 st.success("✅ 照片已上传")
+                st.session_state.upload_counter += 1
                 st.rerun()
         else:
             photo_url = st.text_input("图片链接（URL）", key="detail_photo_url")
@@ -1781,6 +1798,7 @@ def travel_page():
                 st.success("✅ 照片已添加")
                 st.rerun()
         
+        # ---- 显示照片（支持批量选择） ----
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
         cursor.execute("SELECT photo_path, photo_type, shoot_date FROM city_photos WHERE city_name = %s ORDER BY shoot_date DESC", (city_name,))
@@ -1790,23 +1808,51 @@ def travel_page():
         if photos:
             grouped = collections.defaultdict(list)
             for path, ptype, date in photos:
-                grouped[date.strftime("%Y-%m-%d") if date else "未分类"].append((path, ptype))
+                date_str = date.strftime("%Y-%m-%d") if date else "未分类"
+                grouped[date_str].append((path, ptype))
+            
             for date_str, items in sorted(grouped.items(), reverse=True):
-                st.caption(f"📅 {date_str}")
+                col_date, col_select_all = st.columns([5, 1])
+                with col_date:
+                    st.caption(f"📅 {date_str}（{len(items)}张）")
+                with col_select_all:
+                    if st.session_state.delete_mode:
+                        date_photo_paths = [path for path, _ in items]
+                        all_selected = all(p in st.session_state.selected_photos for p in date_photo_paths)
+                        st.checkbox(
+                            "全选",
+                            key=f"select_all_date_{date_str}",
+                            value=all_selected,
+                            on_change=toggle_date_selection,
+                            args=(date_str, date_photo_paths)
+                        )
+                
                 cols = st.columns(4)
                 for idx, (path, ptype) in enumerate(items):
+                    # 计算稳定的 hash key，确保在所有分支中可用
+                    path_hash = hashlib.md5(path.encode('utf-8')).hexdigest()[:8]
                     with cols[idx % 4]:
-                        if ptype == "local":
-                            st.image(path, use_container_width=True)
+                        st.image(path, use_container_width=True)
+                        
+                        if st.session_state.delete_mode:
+                            checkbox_key = f"select_photo_{date_str}_{idx}_{path_hash}"
+                            is_checked = path in st.session_state.selected_photos
+                            st.checkbox(
+                                "选择",
+                                key=checkbox_key,
+                                value=is_checked,
+                                on_change=toggle_photo_selection,
+                                args=(path,)
+                            )
                         else:
-                            st.image(path, use_container_width=True)
-                        if st.button(f"🔍 查看大图", key=f"detail_img_{date_str}_{idx}_{path}"):
-                            st.session_state["large_image"] = path
-                            st.session_state["large_image_type"] = ptype
-                            st.rerun()
+                            if st.button("🔍 查看大图", key=f"detail_img_{date_str}_{idx}_{path_hash}"):
+                                st.session_state["large_image"] = path
+                                st.session_state["large_image_type"] = ptype
+                                st.rerun()
         else:
             st.info("暂无照片")
         
+        # ---- 大图查看 ----
         if "large_image" in st.session_state and st.session_state["large_image"]:
             st.divider()
             st.subheader("🖼️ 大图查看")
@@ -1816,6 +1862,9 @@ def travel_page():
                 st.rerun()
         
         if st.button("← 返回旅行地图", key="back_to_map_from_detail_bottom"):
+            st.session_state.delete_mode = False
+            st.session_state.selected_photos = set()
+            st.session_state.select_all_dates = set()
             st.query_params.clear()
             st.rerun()
         
@@ -1827,6 +1876,9 @@ def travel_page():
         st.markdown("# ✈️ 我们的旅行地图")
     with col_btn:
         if st.button("🏠 返回首页", key="back_home_travel"):
+            st.session_state.delete_mode = False
+            st.session_state.selected_photos = set()
+            st.session_state.select_all_dates = set()
             st.session_state.page = "home"
             st.rerun()
     
@@ -2215,7 +2267,6 @@ def travel_page():
         attr='高德地图'
     )
     
-    # 已去城市：粉色圆点（#FF69B47F）
     for city in visited:
         if city in city_coords:
             lat, lon = city_coords[city][0], city_coords[city][1]
@@ -2230,7 +2281,6 @@ def travel_page():
                 tooltip=city
             ).add_to(m)
     
-    # 计划城市：亮绿色圆点（#6EEE19E6）
     for city in planned:
         if city in city_coords:
             lat, lon = city_coords[city][0], city_coords[city][1]
@@ -2245,17 +2295,14 @@ def travel_page():
                 tooltip=city
             ).add_to(m)
     
-    # 统计卡片
     col1, col2 = st.columns(2)
     with col1:
         st.metric("🏙️ 已点亮", len(visited))
     with col2:
         st.metric("📌 计划中", len(planned))
     
-    # ==================== 地图 ====================
     st_data = st_folium(m, width=2300, height=800)
     
-    # ==================== 已去城市（按省份折叠） ====================
     st.divider()
     
     col_left, col_right = st.columns(2)
@@ -2271,7 +2318,6 @@ def travel_page():
                 else:
                     display_groups[f"{prov}（{len(cities)}）"] = cities
             sorted_keys = sorted(display_groups.keys())
-             # 将 expander 放在窄列中，缩短宽度
             col_exp_blank1, col_exp_mid, col_exp_blank2 = st.columns([0.00001, 1, 0.5])
             with col_exp_mid:
                 for key in sorted_keys:
@@ -2282,12 +2328,10 @@ def travel_page():
                             detail = visited_details.get(city, {})
                             date_str = detail.get("date").strftime("%Y-%m-%d") if detail.get("date") else "未知日期"
                             
-                            # 城市名 + 日期占左列
                             col_name, col_btns = st.columns([3, 0.6])
                             with col_name:
                                 st.write(f"{city}  {date_str}")
                             with col_btns:
-                                # 三个按钮紧凑排列
                                 btn_col1, btn_col2, btn_col3 = st.columns(3)
                                 with btn_col1:
                                     if st.button("🔄", key=f"toggle_{city}", help="点击切换城市状态"):
@@ -2302,7 +2346,6 @@ def travel_page():
                                         st.query_params["delete_city"] = city
                                         st.rerun()
                             
-                            # 修改编辑表单
                             if st.session_state.get("edit_city") == city:
                                 with st.container():
                                     st.divider()
@@ -2340,14 +2383,15 @@ def travel_page():
                                             st.session_state["edit_city"] = None
                                             st.rerun()
                             
-                            # 查看详情按钮
                             if st.button(f"查看 {city} 详情", key=f"detail_{city}"):
+                                st.session_state.selected_photos = set()
+                                st.session_state.select_all_dates = set()
+                                st.session_state.delete_mode = False
                                 st.query_params["city_detail"] = city
                                 st.rerun()
         else:
                 st.write("暂无已去城市")
     
-    # ==================== 计划城市 ====================
     with col_right:
         st.markdown("**💚 计划城市**")
         if planned:
@@ -2374,7 +2418,6 @@ def travel_page():
                             st.query_params["delete_city"] = city
                             st.rerun()
                 
-                # 修改编辑表单（计划城市同样支持）
                 if st.session_state.get("edit_city") == city:
                     with st.container():
                         st.divider()
@@ -2414,7 +2457,6 @@ def travel_page():
         else:
             st.write("暂无计划城市")
     
-    # ==================== 添加旅行记录表单 ====================
     st.divider()
     st.subheader("📝 添加旅行记录")
     
@@ -2424,7 +2466,6 @@ def travel_page():
             city_input = st.text_input("城市名", key="city_input")
             province_input = st.text_input("省份", key="province_input")
         with col2:
-            # 状态：使用占位选项，不默认选中
             status_options = ["", "visited", "planned"]
             status_labels = {"": "请选择状态", "visited": "已去", "planned": "计划中"}
             status_select = st.selectbox(
@@ -2433,7 +2474,6 @@ def travel_page():
                 format_func=lambda x: status_labels.get(x, x),
                 key="status_select"
             )
-            # 日期：不显示默认值，使用 None 让用户自己选择
             date_input = st.date_input("日期", value=None, key="date_input")
         submitted = st.form_submit_button("保存")
         
@@ -2445,7 +2485,6 @@ def travel_page():
             elif date_input is None:
                 st.error("请选择日期")
             else:
-                # 自动填充省份
                 if not province_input and city_input in city_coords and len(city_coords[city_input]) >= 3:
                     province_input = city_coords[city_input][2]
                 if status_select == "visited":
@@ -2468,7 +2507,6 @@ def travel_page():
                         del st.session_state[key]
                 st.rerun()
     
-    # ==================== 处理删除/切换操作 ====================
     if "delete_city" in st.query_params:
         city_to_delete = st.query_params["delete_city"]
         conn = pymysql.connect(**DB_CONFIG)
@@ -2492,50 +2530,370 @@ def travel_page():
         conn.close()
         st.query_params.clear()
         st.rerun()
-
 # ==================== 主页面 ====================
+# ==================== 首页 ====================
 def home_page():
-    now = datetime.datetime.now()
-    hour = now.hour
-    if hour < 6:
-        greeting = "夜深了 🌙"
-    elif hour < 12:
-        greeting = "早上好 ☀️"
-    elif hour < 14:
-        greeting = "中午好 🌤️"
-    elif hour < 18:
-        greeting = "下午好 🌅"
-    elif hour < 22:
-        greeting = "晚上好 🌙"
-    else:
-        greeting = "夜深了 🌙"
+    test_weather()
+    import requests
+    import os
+    from dotenv import load_dotenv
+    from datetime import datetime, timedelta
     
-    st.title(f"🏠 {greeting}，欢迎回家")
-    st.caption(f"📅 {now.strftime('%Y年%m月%d日')}")
-    st.divider()
+    load_dotenv()
+    
+    # ========== 获取天气数据（使用 API Key 方式） ==========
+    def get_weather_by_city_code(city_code):
+        """根据城市代码获取实时天气"""
+        api_key = os.getenv("HEFENG_WEATHER_KEY")
+        if not api_key:
+            return None
+        url = f"https://devapi.qweather.com/v7/weather/now?location={city_code}&key={api_key}"
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("code") == "200":
+                    return {
+                        "temp": data["now"]["temp"],
+                        "text": data["now"]["text"],
+                        "icon": data["now"]["icon"],
+                        "wind_dir": data["now"]["windDir"],
+                        "humidity": data["now"]["humidity"]
+                    }
+            return None
+        except:
+            return None
+    
+    def get_weather_by_lat_lon(lat, lon):
+        """根据经纬度获取实时天气（备用方案）"""
+        api_key = os.getenv("HEFENG_WEATHER_KEY")
+        if not api_key:
+            return None
+        url = f"https://devapi.qweather.com/v7/weather/now?location={lat},{lon}&key={api_key}"
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("code") == "200":
+                    return {
+                        "temp": data["now"]["temp"],
+                        "text": data["now"]["text"],
+                        "icon": data["now"]["icon"],
+                        "wind_dir": data["now"]["windDir"],
+                        "humidity": data["now"]["humidity"]
+                    }
+            return None
+        except:
+            return None
+    
+    # 城市代码：杭州 101210101
+    # 韩城是县级市，用经纬度方式获取（韩城坐标：35.48, 110.45）
+    HANGZHOU_CODE = "101210101"
+    HANCHENG_LAT = "35.48"
+    HANCHENG_LON = "110.45"
+    
+    # 获取天气
+    weather_hz = get_weather_by_city_code(HANGZHOU_CODE)
+    weather_hc = get_weather_by_lat_lon(HANCHENG_LAT, HANCHENG_LON)
+    
+    # ========== 天气图标映射 ==========
+    weather_icons = {
+        "100": "☀️", "101": "⛅", "102": "⛅", "103": "☁️", "104": "☁️",
+        "150": "🌧️", "151": "🌧️", "152": "🌧️", "153": "🌧️",
+        "300": "🌧️", "301": "🌧️", "302": "🌧️", "303": "🌧️", "304": "⛈️",
+        "305": "🌧️", "306": "🌧️", "307": "🌧️", "308": "🌧️", "309": "🌧️",
+        "310": "🌧️", "311": "🌧️", "312": "🌧️", "313": "🌨️", "314": "🌨️",
+        "315": "🌧️", "316": "🌧️", "317": "🌧️", "318": "🌧️",
+        "400": "❄️", "401": "❄️", "402": "❄️", "403": "❄️",
+        "404": "🌨️", "405": "🌨️", "406": "🌨️", "407": "🌨️",
+        "500": "🌫️", "501": "🌫️", "502": "🌫️", "503": "🌫️", "504": "🌫️",
+        "507": "🌪️", "508": "🌪️", "509": "🌫️", "510": "🌫️",
+        "511": "🌫️", "512": "🌫️", "513": "🌫️", "514": "🌫️", "515": "🌫️",
+        "900": "🌞", "901": "🥶", "999": "❓",
+    }
+    
+    def get_weather_icon(icon_code):
+        return weather_icons.get(str(icon_code), "🌤️")
+    
+    # ========== 倒计时逻辑 ==========
+    def get_countdown():
+        target_date = st.session_state.get("next_meeting_date")
+        if not target_date:
+            return None
+        today = datetime.now().date()
+        delta = target_date - today
+        return delta.days
+    
+    # ========== 页面样式 ==========
+    st.markdown("""
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #FFF8F0 0%, #FDF6EC 100%) !important;
+    }
+    h1, h2, h3, h4, h5, h6, p, .stMarkdown {
+        color: #4A3728 !important;
+    }
+    .home-card {
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        padding: 25px 30px;
+        box-shadow: 0 8px 32px rgba(245, 166, 35, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        transition: transform 0.2s ease;
+        margin-bottom: 20px;
+    }
+    .home-card:hover {
+        transform: translateY(-2px);
+    }
+    .countdown-number {
+        font-size: 72px;
+        font-weight: 700;
+        background: linear-gradient(135deg, #FF6B6B, #F5A623);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1.2;
+        text-align: center;
+    }
+    .countdown-label {
+        font-size: 20px;
+        color: #4A3728;
+        text-align: center;
+        margin-top: -5px;
+    }
+    .countdown-days {
+        font-size: 18px;
+        color: #8B7A6B;
+        text-align: center;
+        margin-top: 5px;
+    }
+    .weather-card {
+        background: rgba(255, 255, 255, 0.7);
+        border-radius: 16px;
+        padding: 20px 25px;
+        text-align: center;
+        border: 1px solid rgba(245, 166, 35, 0.15);
+    }
+    .weather-icon {
+        font-size: 48px;
+        display: block;
+        margin-bottom: 5px;
+    }
+    .weather-temp {
+        font-size: 32px;
+        font-weight: 600;
+        color: #4A3728;
+    }
+    .weather-text {
+        font-size: 16px;
+        color: #8B7A6B;
+    }
+    .weather-city {
+        font-size: 14px;
+        color: #A8947F;
+        margin-bottom: 8px;
+    }
+    .weather-detail {
+        font-size: 12px;
+        color: #A8947F;
+        margin-top: 4px;
+    }
+    .entry-card {
+        background: rgba(255, 255, 255, 0.75);
+        border-radius: 24px;
+        padding: 40px 20px;
+        text-align: center;
+        border: 2px solid rgba(245, 166, 35, 0.12);
+        transition: all 0.3s ease;
+        cursor: pointer;
+        box-shadow: 0 4px 20px rgba(245, 166, 35, 0.06);
+        min-height: 220px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    .entry-card:hover {
+        transform: translateY(-4px) scale(1.01);
+        border-color: rgba(245, 166, 35, 0.3);
+        box-shadow: 0 8px 40px rgba(245, 166, 35, 0.12);
+    }
+    .entry-card .emoji {
+        font-size: 56px;
+        margin-bottom: 12px;
+    }
+    .entry-card .title {
+        font-size: 24px;
+        font-weight: 600;
+        color: #4A3728;
+    }
+    .entry-card .subtitle {
+        font-size: 14px;
+        color: #A8947F;
+        margin-top: 4px;
+    }
+    .greeting {
+        font-size: 28px;
+        font-weight: 600;
+        color: #4A3728;
+        margin-bottom: 2px;
+    }
+    .date-display {
+        font-size: 16px;
+        color: #A8947F;
+        margin-bottom: 10px;
+    }
+    .weather-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 10px;
+    }
+    .picker-container {
+        background: rgba(255,255,255,0.7);
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid rgba(245,166,35,0.15);
+        margin-bottom: 15px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # ========== 倒计时设置 ==========
+    if "next_meeting_date" not in st.session_state:
+        st.session_state.next_meeting_date = None
+    if "show_date_picker" not in st.session_state:
+        st.session_state.show_date_picker = False
+    
+    # ========== 头部 ==========
+    col_greeting, col_setting = st.columns([4, 1])
+    with col_greeting:
+        now = datetime.now()
+        hour = now.hour
+        if hour < 6:
+            greeting = "夜深了 🌙"
+        elif hour < 12:
+            greeting = "早上好 ☀️"
+        elif hour < 14:
+            greeting = "中午好 🌤️"
+        elif hour < 18:
+            greeting = "下午好 🌅"
+        elif hour < 22:
+            greeting = "晚上好 🌙"
+        else:
+            greeting = "夜深了 🌙"
+        
+        st.markdown(f'<div class="greeting">{greeting}，欢迎回家 ❤️</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="date-display">📅 {now.strftime("%Y年%m月%d日")}</div>', unsafe_allow_html=True)
+    
+    with col_setting:
+        if st.button("⚙️ 设置见面日", key="set_meeting_date"):
+            st.session_state.show_date_picker = not st.session_state.get("show_date_picker", False)
+            st.rerun()
+    
+    # ========== 日期选择器 ==========
+    if st.session_state.get("show_date_picker", False):
+        with st.container():
+            col_picker1, col_picker2, col_picker3 = st.columns([1, 2, 1])
+            with col_picker2:
+                st.markdown('<div class="picker-container">', unsafe_allow_html=True)
+                default_date = st.session_state.next_meeting_date or datetime.now().date() + timedelta(days=7)
+                new_date = st.date_input(
+                    "📅 选择下一次见面的日期",
+                    value=default_date,
+                    min_value=datetime.now().date(),
+                    key="date_picker_input"
+                )
+                col_btn1, col_btn2, col_btn3 = st.columns(3)
+                with col_btn2:
+                    if st.button("✅ 确认", key="confirm_date"):
+                        st.session_state.next_meeting_date = new_date
+                        st.session_state.show_date_picker = False
+                        st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ========== 倒计时展示 ==========
+    countdown_days = get_countdown()
+    if countdown_days is not None and countdown_days >= 0:
+        st.markdown(f"""
+        <div class="home-card" style="text-align:center; padding: 30px 20px;">
+            <div class="countdown-number">{countdown_days}</div>
+            <div class="countdown-label">❤️ 天后见面 ❤️</div>
+            <div class="countdown-days">距离 {st.session_state.next_meeting_date.strftime('%Y年%m月%d日')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif countdown_days is not None and countdown_days < 0:
+        st.markdown(f"""
+        <div class="home-card" style="text-align:center; padding: 30px 20px; border: 2px solid #FF6B6B;">
+            <div style="font-size: 48px;">🎉</div>
+            <div style="font-size: 24px; font-weight: 600; color: #FF6B6B;">今天就是见面日！</div>
+            <div style="font-size: 16px; color: #8B7A6B; margin-top: 5px;">已过 {abs(countdown_days)} 天，珍惜在一起的时光 ❤️</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="home-card" style="text-align:center; padding: 30px 20px; border: 2px dashed rgba(245,166,35,0.3);">
+            <div style="font-size: 24px; color: #A8947F;">💕 点击「设置见面日」记录下次见面的时间吧</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # ========== 两地天气 ==========
+    st.markdown('<div class="weather-grid">', unsafe_allow_html=True)
+    
+    # 杭州
+    if weather_hz:
+        icon_hz = get_weather_icon(weather_hz["icon"])
+        st.markdown(f"""
+        <div class="weather-card">
+            <div class="weather-city">🏠 杭州 · 他</div>
+            <span class="weather-icon">{icon_hz}</span>
+            <div class="weather-temp">{weather_hz["temp"]}°C</div>
+            <div class="weather-text">{weather_hz["text"]}</div>
+            <div class="weather-detail">💨 {weather_hz.get("wind_dir", "")} · 💧 {weather_hz.get("humidity", "")}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="weather-card">
+            <div class="weather-city">🏠 杭州 · 他</div>
+            <div style="color:#A8947F; padding:20px 0;">🌤️ 天气数据获取中...</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # 韩城
+    if weather_hc:
+        icon_hc = get_weather_icon(weather_hc["icon"])
+        st.markdown(f"""
+        <div class="weather-card">
+            <div class="weather-city">🏠 韩城 · 她</div>
+            <span class="weather-icon">{icon_hc}</span>
+            <div class="weather-temp">{weather_hc["temp"]}°C</div>
+            <div class="weather-text">{weather_hc["text"]}</div>
+            <div class="weather-detail">💨 {weather_hc.get("wind_dir", "")} · 💧 {weather_hc.get("humidity", "")}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="weather-card">
+            <div class="weather-city">🏠 韩城 · 她</div>
+            <div style="color:#A8947F; padding:20px 0;">🌤️ 天气数据获取中...</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ========== 入口卡片 ==========
+    st.markdown("<br>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("""
-        <div style="background: #FFF5E6; border-radius: 20px; padding: 30px; text-align: center; border: 2px solid #FFD699;">
-            <div style="font-size: 60px;">✈️</div>
-            <div style="font-size: 24px; font-weight: bold; margin-top: 10px;">旅行</div>
-            <div style="color: #888; font-size: 14px;">记录我们走过的路</div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("进入旅行", key="go_travel", use_container_width=True):
+        if st.button("✈️ 旅行", key="go_travel_home", use_container_width=True):
             st.session_state.page = "travel"
             st.rerun()
     
     with col2:
-        st.markdown("""
-        <div style="background: #E8F5E9; border-radius: 20px; padding: 30px; text-align: center; border: 2px solid #A5D6A7;">
-            <div style="font-size: 60px;">📖</div>
-            <div style="font-size: 24px; font-weight: bold; margin-top: 10px;">做菜</div>
-            <div style="color: #888; font-size: 14px;">吃好每一顿饭</div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("进入做菜", key="go_cook", use_container_width=True):
+        if st.button("📖 做菜", key="go_cook_home", use_container_width=True):
             st.session_state.page = "cook"
             st.rerun()
 
