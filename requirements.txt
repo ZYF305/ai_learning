@@ -2,3 +2,7 @@ streamlit
 pymysql
 python-dotenv
 dashscope
+folium
+streamlit-folium
+requests
+psycopg2-binary
