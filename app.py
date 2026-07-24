@@ -26,7 +26,7 @@ SUPABASE_CONFIG = {
     "host": "jmltvpxrqzwjzhissibf.supabase.co",
     "database": "postgres",
     "user": "postgres",
-    "password": "ssdyfssdwt0425",
+    "password": "ssdyfssdwt0425.",
     "port": 5432
 }
 
