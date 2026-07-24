@@ -17,7 +17,7 @@ DB_CONFIG = {
 
 # ==================== 从 MySQL 加载数据 ====================
 def load_menu_from_db():
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT name, ingredients, steps FROM recipes")
     rows = cursor.fetchall()
@@ -35,7 +35,7 @@ print(f"📂 已从 MySQL 加载 {len(menu)} 道菜")
 
 # ==================== 数据库操作辅助函数 ====================
 def insert_recipe(name, ingredients, steps):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
     ingredients_str = ",".join(ingredients)
     cursor.execute(
@@ -46,14 +46,14 @@ def insert_recipe(name, ingredients, steps):
     conn.close()
 
 def delete_recipe(name):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM recipes WHERE name = %s", (name,))
     conn.commit()
     conn.close()
 
 def update_recipe(name, new_ingredients, new_steps):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
     ingredients_str = ",".join(new_ingredients)
     cursor.execute(

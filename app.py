@@ -1,42 +1,85 @@
 import streamlit as st
-import pymysql
 import os
-from dotenv import load_dotenv
-import dashscope
-from dashscope import Generation
-import datetime
-import folium
-from streamlit_folium import st_folium
 import json
 import re
 import collections
+import datetime
 import requests
+import base64
+import tempfile
+from dotenv import load_dotenv
 
-def test_weather():
-    api_key = "90cf2b0c3ed843adb8a902e23f0684bd"
-    # 用经纬度测试杭州（经度,纬度格式）
-    url = f"https://devapi.qweather.com/v7/weather/now?location=30.27,120.15&key={api_key}"
-    print(f"测试 URL: {url}")
-    try:
-        response = requests.get(url, timeout=10)
-        print(f"状态码: {response.status_code}")
-        print(f"返回内容: {response.text[:500]}")
-    except Exception as e:
-        print(f"请求失败: {e}")
 load_dotenv()
 
-# ==================== 数据库配置 ====================
-DB_CONFIG = {
+# ==================== 数据库配置（两套） ====================
+MYSQL_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "75757575",   # 改成你实际的 root 密码
+    "password": "75757575",
     "database": "menu_db",
     "charset": "utf8mb4"
 }
 
+SUPABASE_CONFIG = {
+    "host": "jmltvpxrqzwjzhissibf.supabase.co",
+    "database": "postgres",
+    "user": "postgres",
+    "password": "ssdyfssdwt0425",
+    "port": 5432
+}
+
+def get_db_connection():
+    """自动判断环境：本地用 MySQL，云端用 Supabase"""
+    if os.getenv("STREAMLIT_CLOUD"):
+        try:
+            import psycopg2
+            return psycopg2.connect(
+                host=SUPABASE_CONFIG["host"],
+                database=SUPABASE_CONFIG["database"],
+                user=SUPABASE_CONFIG["user"],
+                password=SUPABASE_CONFIG["password"],
+                port=SUPABASE_CONFIG["port"]
+            )
+        except Exception as e:
+            return None
+    else:
+        try:
+            import pymysql
+            return pymysql.connect(**MYSQL_CONFIG)
+        except Exception as e:
+            return None
+
+def is_cloud():
+    """判断是否在云端环境"""
+    return os.getenv("STREAMLIT_CLOUD") is not None
+
+def execute_query(sql, params=None, fetch=True):
+    """执行查询，自动适配两种数据库"""
+    conn = get_db_connection()
+    if conn is None:
+        return [] if fetch else None
+    
+    cursor = conn.cursor()
+    try:
+        # PostgreSQL 的 %s 和 MySQL 的 %s 通用
+        cursor.execute(sql, params or ())
+        if fetch:
+            result = cursor.fetchall()
+            conn.close()
+            return result
+        else:
+            conn.commit()
+            conn.close()
+            return True
+    except Exception as e:
+        conn.close()
+        raise e
+
 # ==================== 菜谱相关函数 ====================
 def load_menu():
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
+    if conn is None:
+        return []
     cursor = conn.cursor()
     cursor.execute("SELECT name, ingredients, steps FROM recipes")
     rows = cursor.fetchall()
@@ -44,7 +87,9 @@ def load_menu():
     return rows
 
 def add_recipe(name, ingredients, steps):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
+    if conn is None:
+        return False
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO recipes (name, ingredients, steps) VALUES (%s, %s, %s)",
@@ -52,16 +97,22 @@ def add_recipe(name, ingredients, steps):
     )
     conn.commit()
     conn.close()
+    return True
 
 def delete_recipe(name):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
+    if conn is None:
+        return False
     cursor = conn.cursor()
     cursor.execute("DELETE FROM recipes WHERE name = %s", (name,))
     conn.commit()
     conn.close()
+    return True
 
 def update_recipe(old_name, new_name, new_ingredients, new_steps):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
+    if conn is None:
+        return False
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE recipes SET name = %s, ingredients = %s, steps = %s WHERE name = %s",
@@ -69,6 +120,7 @@ def update_recipe(old_name, new_name, new_ingredients, new_steps):
     )
     conn.commit()
     conn.close()
+    return True
 
 def search_recipes_by_keyword(query):
     rows = load_menu()
@@ -81,6 +133,8 @@ def search_recipes_by_keyword(query):
     return results
 
 def ai_generate_recipes(taste, count=5):
+    import dashscope
+    from dashscope import Generation
     dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
     prompt = f"""你是一个厨艺高超的AI厨师。请根据以下要求生成 {count} 道菜谱：
 口味要求：{taste}
@@ -278,7 +332,7 @@ def cook_page():
 
     # ==================== 分类操作函数 ====================
     def get_categories():
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id, name, icon, sort_order FROM categories ORDER BY sort_order, id")
         rows = cursor.fetchall()
@@ -286,7 +340,7 @@ def cook_page():
         return rows
 
     def add_category(name, icon="📋"):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO categories (name, icon) VALUES (%s, %s)",
@@ -296,7 +350,7 @@ def cook_page():
         conn.close()
 
     def update_category(cat_id, new_name):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE categories SET name = %s WHERE id = %s",
@@ -306,7 +360,7 @@ def cook_page():
         conn.close()
 
     def delete_category(cat_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM categories WHERE id = %s", (cat_id,))
         conn.commit()
@@ -314,7 +368,7 @@ def cook_page():
 
     # ==================== 菜操作函数 ====================
     def get_recipes_by_category(category_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "SELECT id, name, ingredients, steps, cook_count FROM recipes WHERE category_id = %s ORDER BY name",
@@ -325,7 +379,7 @@ def cook_page():
         return rows
 
     def add_recipe(name, ingredients, steps, category_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO recipes (name, ingredients, steps, category_id) VALUES (%s, %s, %s, %s)",
@@ -335,7 +389,7 @@ def cook_page():
         conn.close()
 
     def update_recipe(recipe_id, name, ingredients, steps, category_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE recipes SET name = %s, ingredients = %s, steps = %s, category_id = %s WHERE id = %s",
@@ -345,14 +399,14 @@ def cook_page():
         conn.close()
 
     def delete_recipe(recipe_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM recipes WHERE id = %s", (recipe_id,))
         conn.commit()
         conn.close()
 
     def increment_cook_count(recipe_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE recipes SET cook_count = cook_count + 1 WHERE id = %s",
@@ -362,7 +416,7 @@ def cook_page():
         conn.close()
 
     def get_category_name(cat_id):
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT name, icon FROM categories WHERE id = %s", (cat_id,))
         row = cursor.fetchone()
@@ -372,7 +426,7 @@ def cook_page():
     # ==================== 检查菜名是否已存在 ====================
     def recipe_exists(name):
         """检查菜名是否已存在（忽略前后空格，严格匹配）"""
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM recipes WHERE TRIM(name) = %s", (name.strip(),))
         count = cursor.fetchone()[0]
@@ -392,7 +446,7 @@ def cook_page():
         normalized = [SYNONYM_MAP.get(k, k) for k in keywords]
         normalized = list(set(normalized))
 
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         conditions = " AND ".join(["ingredients LIKE %s"] * len(normalized))
         sql = f"""
@@ -428,7 +482,7 @@ def cook_page():
         keywords = [k.strip() for k in re.split('[,，、\\s]+', keyword) if k.strip()]
         if not keywords:
             return []
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         conditions = " AND ".join(["name LIKE %s"] * len(keywords))
         sql = f"""
@@ -604,7 +658,7 @@ def cook_page():
             st.info("暂无分类，请先添加")
         else:
             for cat_id, cat_name, icon, sort_order in categories:
-                conn = pymysql.connect(**DB_CONFIG)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM recipes WHERE category_id = %s", (cat_id,))
                 count = cursor.fetchone()[0]
@@ -1665,7 +1719,7 @@ def travel_page():
             st.rerun()
         
         # 加载城市基本信息
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT province, visit_date, plan_date FROM travel_records WHERE city_name = %s", (city_name,))
         record = cursor.fetchone()
@@ -1685,7 +1739,7 @@ def travel_page():
         
         # 实际游玩路线
         st.subheader("🗺️ 实际游玩路线")
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT route FROM city_details WHERE city_name = %s", (city_name,))
         route_row = cursor.fetchone()
@@ -1694,7 +1748,7 @@ def travel_page():
         
         new_route = st.text_area("编辑游玩路线", value=current_route, height=150, placeholder="记录你的实际行程...")
         if st.button("保存路线", key="save_route_detail"):
-            conn = pymysql.connect(**DB_CONFIG)
+            conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO city_details (city_name, route) VALUES (%s, %s) ON DUPLICATE KEY UPDATE route = %s",
@@ -1720,7 +1774,7 @@ def travel_page():
         with col_action2:
             if st.session_state.delete_mode and st.session_state.selected_photos:
                 if st.button(f"✅ 确认删除 ({len(st.session_state.selected_photos)}张)", key="confirm_batch_delete"):
-                    conn = pymysql.connect(**DB_CONFIG)
+                    conn = get_db_connection()
                     cursor = conn.cursor()
                     deleted_paths = set()
                     for photo_path in list(st.session_state.selected_photos):
@@ -1772,7 +1826,7 @@ def travel_page():
                     file_path = os.path.join(upload_dir, unique_name)
                     with open(file_path, "wb") as f:
                         f.write(file.getbuffer())
-                    conn = pymysql.connect(**DB_CONFIG)
+                    conn = get_db_connection()
                     cursor = conn.cursor()
                     cursor.execute(
                         "INSERT INTO city_photos (city_name, photo_path, photo_type, shoot_date) VALUES (%s, %s, %s, %s)",
@@ -1787,7 +1841,7 @@ def travel_page():
             photo_url = st.text_input("图片链接（URL）", key="detail_photo_url")
             shoot_date = st.date_input("拍摄日期", value=datetime.date.today(), key="detail_shoot_date")
             if photo_url and st.button("添加照片", key="detail_add_url_photo"):
-                conn = pymysql.connect(**DB_CONFIG)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO city_photos (city_name, photo_path, photo_type, shoot_date) VALUES (%s, %s, %s, %s)",
@@ -1799,7 +1853,7 @@ def travel_page():
                 st.rerun()
         
         # ---- 显示照片（支持批量选择） ----
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT photo_path, photo_type, shoot_date FROM city_photos WHERE city_name = %s ORDER BY shoot_date DESC", (city_name,))
         photos = cursor.fetchall()
@@ -2221,7 +2275,7 @@ def travel_page():
     }
     
     # ==================== 从数据库加载数据 ====================
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, city_name, province, status, description, visit_date, plan_date FROM travel_records")
     rows = cursor.fetchall()
@@ -2361,7 +2415,7 @@ def travel_page():
                                     col_save, col_cancel = st.columns(2)
                                     with col_save:
                                         if st.button("💾 保存修改", key=f"save_edit_{city}"):
-                                            conn = pymysql.connect(**DB_CONFIG)
+                                            conn = get_db_connection()
                                             cursor = conn.cursor()
                                             if new_status == "visited":
                                                 cursor.execute(
@@ -2433,7 +2487,7 @@ def travel_page():
                         col_save, col_cancel = st.columns(2)
                         with col_save:
                             if st.button("💾 保存修改", key=f"save_edit_plan_{city}"):
-                                conn = pymysql.connect(**DB_CONFIG)
+                                conn = get_db_connection()
                                 cursor = conn.cursor()
                                 if new_status == "visited":
                                     cursor.execute(
@@ -2493,7 +2547,7 @@ def travel_page():
                 else:
                     visit_date = None
                     plan_date = date_input
-                conn = pymysql.connect(**DB_CONFIG)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO travel_records (city_name, province, visit_date, plan_date, status, description) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -2509,7 +2563,7 @@ def travel_page():
     
     if "delete_city" in st.query_params:
         city_to_delete = st.query_params["delete_city"]
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM travel_records WHERE city_name = %s", (city_to_delete,))
         conn.commit()
@@ -2519,7 +2573,7 @@ def travel_page():
     
     if "toggle_city" in st.query_params:
         city_to_toggle = st.query_params["toggle_city"]
-        conn = pymysql.connect(**DB_CONFIG)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT status FROM travel_records WHERE city_name = %s", (city_to_toggle,))
         current = cursor.fetchone()
@@ -2533,21 +2587,39 @@ def travel_page():
 # ==================== 主页面 ====================
 # ==================== 首页 ====================
 def home_page():
-    test_weather()
-    import requests
-    import os
-    from dotenv import load_dotenv
     from datetime import datetime, timedelta
+    import json
+    import os
     
-    load_dotenv()
+    # 配置文件名
+    CONFIG_FILE = "home_config.json"
     
-    # ========== 获取天气数据（使用 API Key 方式） ==========
+    def load_config():
+        """从 JSON 文件读取配置"""
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    date_str = data.get("next_meeting_date")
+                    if date_str:
+                        return datetime.fromisoformat(date_str).date()
+            except:
+                pass
+        return None
+    
+    def save_config(date_obj):
+        """保存配置到 JSON 文件"""
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "next_meeting_date": date_obj.isoformat() if date_obj else None
+            }, f, ensure_ascii=False, indent=2)
+    
+    HEFENG_WEATHER_KEY = "90cf2b0c3ed843adb8a902e23f0684bd"
+    
     def get_weather_by_city_code(city_code):
-        """根据城市代码获取实时天气"""
-        api_key = os.getenv("HEFENG_WEATHER_KEY")
-        if not api_key:
+        if not HEFENG_WEATHER_KEY:
             return None
-        url = f"https://devapi.qweather.com/v7/weather/now?location={city_code}&key={api_key}"
+        url = f"https://devapi.qweather.com/v7/weather/now?location={city_code}&key={HEFENG_WEATHER_KEY}"
         try:
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
@@ -2565,11 +2637,9 @@ def home_page():
             return None
     
     def get_weather_by_lat_lon(lat, lon):
-        """根据经纬度获取实时天气（备用方案）"""
-        api_key = os.getenv("HEFENG_WEATHER_KEY")
-        if not api_key:
+        if not HEFENG_WEATHER_KEY:
             return None
-        url = f"https://devapi.qweather.com/v7/weather/now?location={lat},{lon}&key={api_key}"
+        url = f"https://devapi.qweather.com/v7/weather/now?location={lat},{lon}&key={HEFENG_WEATHER_KEY}"
         try:
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
@@ -2586,17 +2656,13 @@ def home_page():
         except:
             return None
     
-    # 城市代码：杭州 101210101
-    # 韩城是县级市，用经纬度方式获取（韩城坐标：35.48, 110.45）
     HANGZHOU_CODE = "101210101"
     HANCHENG_LAT = "35.48"
     HANCHENG_LON = "110.45"
     
-    # 获取天气
     weather_hz = get_weather_by_city_code(HANGZHOU_CODE)
     weather_hc = get_weather_by_lat_lon(HANCHENG_LAT, HANCHENG_LON)
     
-    # ========== 天气图标映射 ==========
     weather_icons = {
         "100": "☀️", "101": "⛅", "102": "⛅", "103": "☁️", "104": "☁️",
         "150": "🌧️", "151": "🌧️", "152": "🌧️", "153": "🌧️",
@@ -2615,7 +2681,6 @@ def home_page():
     def get_weather_icon(icon_code):
         return weather_icons.get(str(icon_code), "🌤️")
     
-    # ========== 倒计时逻辑 ==========
     def get_countdown():
         target_date = st.session_state.get("next_meeting_date")
         if not target_date:
@@ -2624,7 +2689,6 @@ def home_page():
         delta = target_date - today
         return delta.days
     
-    # ========== 页面样式 ==========
     st.markdown("""
     <style>
     .stApp {
@@ -2760,13 +2824,17 @@ def home_page():
     </style>
     """, unsafe_allow_html=True)
     
-    # ========== 倒计时设置 ==========
-    if "next_meeting_date" not in st.session_state:
-        st.session_state.next_meeting_date = None
+    # ==================== 初始化（从 JSON 文件加载） ====================
+    if "next_meeting_date" not in st.session_state or st.session_state.next_meeting_date is None:
+        loaded_date = load_config()
+        if loaded_date:
+            st.session_state.next_meeting_date = loaded_date
+        else:
+            st.session_state.next_meeting_date = None
+    
     if "show_date_picker" not in st.session_state:
         st.session_state.show_date_picker = False
     
-    # ========== 头部 ==========
     col_greeting, col_setting = st.columns([4, 1])
     with col_greeting:
         now = datetime.now()
@@ -2792,7 +2860,6 @@ def home_page():
             st.session_state.show_date_picker = not st.session_state.get("show_date_picker", False)
             st.rerun()
     
-    # ========== 日期选择器 ==========
     if st.session_state.get("show_date_picker", False):
         with st.container():
             col_picker1, col_picker2, col_picker3 = st.columns([1, 2, 1])
@@ -2809,11 +2876,11 @@ def home_page():
                 with col_btn2:
                     if st.button("✅ 确认", key="confirm_date"):
                         st.session_state.next_meeting_date = new_date
+                        save_config(new_date)
                         st.session_state.show_date_picker = False
                         st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
     
-    # ========== 倒计时展示 ==========
     countdown_days = get_countdown()
     if countdown_days is not None and countdown_days >= 0:
         st.markdown(f"""
@@ -2838,10 +2905,8 @@ def home_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # ========== 两地天气 ==========
     st.markdown('<div class="weather-grid">', unsafe_allow_html=True)
     
-    # 杭州
     if weather_hz:
         icon_hz = get_weather_icon(weather_hz["icon"])
         st.markdown(f"""
@@ -2861,7 +2926,6 @@ def home_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # 韩城
     if weather_hc:
         icon_hc = get_weather_icon(weather_hc["icon"])
         st.markdown(f"""
@@ -2883,7 +2947,6 @@ def home_page():
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # ========== 入口卡片 ==========
     st.markdown("<br>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -2891,7 +2954,6 @@ def home_page():
         if st.button("✈️ 旅行", key="go_travel_home", use_container_width=True):
             st.session_state.page = "travel"
             st.rerun()
-    
     with col2:
         if st.button("📖 做菜", key="go_cook_home", use_container_width=True):
             st.session_state.page = "cook"
