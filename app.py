@@ -33,17 +33,18 @@ SUPABASE_CONFIG = {
 
 # ==================== 自动切换数据库连接 ====================
 def get_db_connection():
-    """自动判断环境：本地用 MySQL，云端用 Supabase"""
-    is_cloud = os.getenv("STREAMLIT_CLOUD") is not None or os.getenv("STREAMLIT_SHARING") is not None
-    
-    st.write(f"🔍 环境判断: is_cloud = {is_cloud}")  # 调试用
-    
+    # 直接判断 st.secrets 里有没有标记
+    is_cloud = False
+    try:
+        if st.secrets.get("ENV") == "cloud":
+            is_cloud = True
+    except:
+        pass
+
     if is_cloud:
-        st.write("🔍 尝试连接 Supabase...")
-        st.write(f"   Host: {SUPABASE_CONFIG['host']}")
+        # 连 Supabase
         try:
             import psycopg2
-            st.write("🔍 psycopg2 导入成功")
             conn = psycopg2.connect(
                 host=SUPABASE_CONFIG["host"],
                 database=SUPABASE_CONFIG["database"],
@@ -52,20 +53,15 @@ def get_db_connection():
                 port=SUPABASE_CONFIG["port"],
                 connect_timeout=10
             )
-            st.write("✅ Supabase 连接成功")
             return conn
         except Exception as e:
-            st.error(f"❌ Supabase 连接失败: {e}")
             return None
     else:
-        st.write("🔍 本地环境，连接 MySQL...")
+        # 本地连 MySQL
         try:
             import pymysql
-            conn = pymysql.connect(**MYSQL_CONFIG)
-            st.write("✅ MySQL 连接成功")
-            return conn
+            return pymysql.connect(**MYSQL_CONFIG)
         except Exception as e:
-            st.error(f"❌ MySQL 连接失败: {e}")
             return None
 
 
